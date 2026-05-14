@@ -1,0 +1,10 @@
+robot:
+  model: "Fairino FR3"
+  ip: "192.168.58.2"
+  max_reach_mm: 900
+
+motion:
+  z_hover: 30
+  z_write: 0
+  speed_move: 80
+  speed_write: 40

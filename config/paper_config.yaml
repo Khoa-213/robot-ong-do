@@ -1,0 +1,8 @@
+paper:
+  width_mm: 200
+  height_mm: 120
+
+origin:
+  x: 350
+  y: -150
+  z: 0
