@@ -1,0 +1,9 @@
+numpy
+pandas
+matplotlib
+svgpathtools
+opencv-python
+fastapi
+uvicorn
+SpeechRecognition
+gTTS
