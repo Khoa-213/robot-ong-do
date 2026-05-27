@@ -1,0 +1,169 @@
+{
+  "robot_ip": "192.168.58.2",
+  "tool": 0,
+  "user": 0,
+  "default_vel": 20,
+  "enable_robot_move": true,
+  "connection_policy": {
+    "command_port": 20003,
+    "legacy_state_port": 20004,
+    "cnde_port": 20005,
+    "allow_xmlrpc_motion_when_cnde_unavailable": false,
+    "allow_raw_xmlrpc_motion": true
+  },
+  "robot_workspace": {
+    "x_min": -500.0,
+    "x_max": 500.0,
+    "y_min": -600.0,
+    "y_max": 600.0,
+    "z_min": 100.0,
+    "z_max": 900.0
+  },
+  "paper": {
+    "enabled": true,
+    "origin_x": -72.905,
+    "origin_y": 566.026,
+    "paper_z": 254.063,
+    "width_mm": 130.134,
+    "height_mm": 187.6,
+    "margin_mm": 20.0,
+    "coordinate_mode": "measured_corners",
+    "draw_orientation": [179.554, 1.428, -118.339],
+    "corners": {
+      "top_left": [-72.905, 566.026, 254.059, 178.105, 6.628, -117.259],
+      "top_right": [57.222, 563.859, 254.065, 178.438, 5.884, -130.427],
+      "bottom_right": [54.994, 376.268, 254.059, -179.927, 2.518, -137.905],
+      "bottom_left": [-75.305, 379.196, 254.069, 179.554, 1.428, -118.339]
+    }
+  },
+  "z_safety": {
+    "z_lift_offset": 0.0,
+    "z_write_light_offset": 2.0,
+    "z_write_normal_offset": 0.0,
+    "z_write_bold_offset": -1.5,
+    "z_min_allowed_offset": -3.0
+  },
+  "line_demo": {
+    "start_pose": [82.858, -229.638, 752.628, 12.552, -0.323, 143.515],
+    "end_pose": [132.858, -229.638, 752.628, 12.552, -0.323, 143.515]
+  },
+  "paper_line_demo": {
+    "start_u": 0.25,
+    "end_u": 0.75,
+    "line_v": 0.5
+  },
+  "circle_demo": {
+    "center_u": 0.5,
+    "center_v": 0.5,
+    "radius_u": 0.16,
+    "radius_v": 0.16,
+    "segments": 24,
+    "vel": 50
+  },
+  "shape_demo": {
+    "default_shape": "circle",
+    "center_u": 0.5,
+    "center_v": 0.5,
+    "radius_u": 0.16,
+    "radius_v": 0.16,
+    "square_half_u": 0.16,
+    "square_half_v": 0.16,
+    "triangle_radius_u": 0.18,
+    "triangle_radius_v": 0.18,
+    "segments": 24,
+    "vel": 50
+  },
+  "before_draw": {
+    "start_pose": [-79.006, 386.988, 326.726, 179.446, 3.677, -117.524],
+    "start_vel": 20
+  },
+  "svg_demo": {
+    "svg_path": "assets/svg/tâm.svg",
+    "u_min": 0.25,
+    "u_max": 0.75,
+    "v_min": 0.25,
+    "v_max": 0.75,
+    "samples_per_path": 120,
+    "vel": 50
+  },
+  "text_demo": {
+    "mode": "single_line",
+    "continuous": false,
+    "u_min": 0.2,
+    "u_max": 0.8,
+    "v_min": 0.2,
+    "v_max": 0.8,
+    "font_family": "DejaVu Sans",
+    "font_size": 1.0,
+    "invert_y": true,
+    "max_points_per_stroke": 48,
+    "vel": 20,
+    "travel_vel": 20,
+    "travel_z_offset": 20.0
+  },
+  "after_draw": {
+    "return_to_bottom_left": true,
+    "return_corner": "bottom_left",
+    "return_pose": [-79.006, 386.988, 326.726, 179.446, 3.677, -117.524],
+    "return_vel": 20
+  },
+  "motion_strategy": {
+    "approach_with_move_j": true,
+    "approach_vel": 20,
+    "draw_with_move_l": true
+  },
+  "tool_do_gripper": {
+    "enabled": false,
+    "enable_tool_do_gripper": false,
+    "do_id": 1,
+    "open_status": 0,
+    "close_status": 1,
+    "smooth": 0,
+    "block": 1,
+    "cycle_count": 5,
+    "hold_seconds": 1.0
+  },
+  "gripper": {
+    "enabled": true,
+    "model": "JODELL EPG40-050",
+    "model_code": "EPG40-050-0PF-L200-C7-N-A-P40-S00",
+    "voltage_v": 24,
+    "max_current_a": 0.85,
+    "communication_protocol": "RS485",
+    "matching_cable": "M12-5FA-S5-5000-P",
+    "interface": "tool_end",
+    "enable_gripper_motion": true,
+    "allow_raw_xmlrpc_gripper": true,
+    "index": 1,
+    "company": 1,
+    "device": 5,
+    "softversion": 0,
+    "bus": 0,
+    "open_pos": 100,
+    "close_pos": 20,
+    "test_vel": 10,
+    "test_force": 10,
+    "max_time_ms": 5000,
+    "block": 0,
+    "type": 0,
+    "rot_num": 0,
+    "rot_vel": 0,
+    "rot_torque": 0,
+    "tool_end_lua": {
+      "configure_before_test": false,
+      "baud_rate_code": 7,
+      "data_bit": 8,
+      "stop_bit": 1,
+      "verify": 0,
+      "timeout_ms": 5,
+      "timeout_times": 3,
+      "period_ms": 1000,
+      "enable_lua": true,
+      "force_sensor_enable": 0,
+      "gripper_enable": 1,
+      "io_enable": 0,
+      "enable_gripper_func": true,
+      "gripper_func": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+    }
+  }
+}
