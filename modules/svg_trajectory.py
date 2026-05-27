@@ -30,26 +30,39 @@ def build_svg_poses(config: dict[str, Any], svg_path: Path) -> list[list[float]]
 
 
 def sample_svg_points(svg_path: Path, samples_per_path: int = 120) -> list[Point]:
+    strokes = sample_svg_strokes(svg_path, samples_per_path)
+    return [point for stroke in strokes for point in stroke]
+
+
+def sample_svg_strokes(svg_path: Path, samples_per_path: int = 120) -> list[list[Point]]:
     if samples_per_path < 8:
         raise ValueError("samples_per_path must be at least 8")
     if not svg_path.exists():
         raise FileNotFoundError(f"SVG file not found: {svg_path}")
 
     root = ET.parse(svg_path).getroot()
-    points: list[Point] = []
+    strokes: list[list[Point]] = []
 
     for element, matrix in _walk_svg(root, IDENTITY):
-        if _strip_namespace(element.tag) != "path":
+        tag = _strip_namespace(element.tag)
+        if tag == "path":
+            path_data = element.attrib.get("d")
+            if not path_data:
+                continue
+            local_points = _sample_path_data(path_data, samples_per_path)
+        elif tag in ("polyline", "polygon"):
+            local_points = _sample_poly_points(element.attrib.get("points", ""), samples_per_path)
+            if tag == "polygon" and len(local_points) >= 2 and local_points[0] != local_points[-1]:
+                local_points.append(local_points[0])
+        else:
             continue
-        path_data = element.attrib.get("d")
-        if not path_data:
-            continue
-        local_points = _sample_path_data(path_data, samples_per_path)
-        points.extend(_apply_matrix(matrix, point) for point in local_points)
+        points = [_apply_matrix(matrix, point) for point in local_points]
+        if len(points) >= 2:
+            strokes.append(points)
 
-    if not points:
-        raise ValueError(f"No SVG path points found in {svg_path}")
-    return points
+    if not strokes:
+        raise ValueError(f"No SVG path or polyline points found in {svg_path}")
+    return strokes
 
 
 def fit_points_to_uv(
@@ -228,6 +241,15 @@ def _sample_path_data(path_data: str, samples_per_path: int) -> list[Point]:
         else:
             raise ValueError(f"Unsupported SVG path command: {command}")
 
+    if len(points) > samples_per_path:
+        step = max(len(points) / samples_per_path, 1.0)
+        points = [points[int(i * step)] for i in range(samples_per_path)]
+    return points
+
+
+def _sample_poly_points(points_data: str, samples_per_path: int) -> list[Point]:
+    values = [float(value) for value in re.findall(r"[-+]?(?:\d*\.\d+|\d+)(?:[eE][-+]?\d+)?", points_data)]
+    points = [(values[index], values[index + 1]) for index in range(0, len(values) - 1, 2)]
     if len(points) > samples_per_path:
         step = max(len(points) / samples_per_path, 1.0)
         points = [points[int(i * step)] for i in range(samples_per_path)]

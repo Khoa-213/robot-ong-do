@@ -1,6 +1,11 @@
 from typing import Any
 
 from modules.sdk_path import setup_fairino_sdk_path
+from modules.trajectory_planner import (
+    SmoothMotionConfig,
+    plan_pose_stroke,
+    stroke_speed_factors,
+)
 
 
 class FairinoRawXmlRpcController:
@@ -125,9 +130,11 @@ class FairinoRawXmlRpcController:
         vel: float = 5.0,
         enable_move: bool = False,
         allow_raw_xmlrpc_motion: bool = False,
+        blend_radius: float = -1.0,
     ):
         print("[RAW_MOVEL] Requested pose:", pose)
         print("[RAW_MOVEL] Velocity:", vel)
+        print("[RAW_MOVEL] Blend radius:", blend_radius)
         print("[RAW_MOVEL] enable_move:", enable_move)
         print("[RAW_MOVEL] allow_raw_xmlrpc_motion:", allow_raw_xmlrpc_motion)
 
@@ -139,11 +146,79 @@ class FairinoRawXmlRpcController:
             print("[RAW_MOVEL] Preview only, raw MoveL was NOT sent")
             return None
 
-        params = self._build_raw_movel_params(pose, joint_pos, vel)
+        params = self._build_raw_movel_params(pose, joint_pos, vel, blend_radius)
         print("[RAW_MOVEL] Sending raw MoveL params:", params)
         result = self.raw.MoveL(params)
         print("[RAW_MOVEL] raw MoveL result:", result)
         return result
+
+    def new_spline_stroke(
+        self,
+        poses: list[list[float]],
+        vel: float = 5.0,
+        acc: float = 0.0,
+        blend_radius: float = 0.0,
+        spline_type: int = 1,
+        spline_average_time_ms: int = 2000,
+        enable_move: bool = False,
+        allow_raw_xmlrpc_motion: bool = False,
+        planner_config: SmoothMotionConfig | None = None,
+    ):
+        if len(poses) < 2:
+            raise ValueError("new_spline_stroke requires at least 2 poses")
+
+        planned = plan_pose_stroke(poses, planner_config or SmoothMotionConfig())
+        speed_factors = stroke_speed_factors(planned, planner_config or SmoothMotionConfig())
+        print("[RAW_NEWSPLINE] Original point count:", len(poses))
+        print("[RAW_NEWSPLINE] Planned point count:", len(planned))
+        print("[RAW_NEWSPLINE] Velocity:", vel)
+        print("[RAW_NEWSPLINE] Acceleration:", acc)
+        print("[RAW_NEWSPLINE] Blend radius:", blend_radius)
+        print("[RAW_NEWSPLINE] Spline type:", spline_type)
+        print("[RAW_NEWSPLINE] Average time ms:", spline_average_time_ms)
+        print("[RAW_NEWSPLINE] enable_move:", enable_move)
+        print("[RAW_NEWSPLINE] allow_raw_xmlrpc_motion:", allow_raw_xmlrpc_motion)
+
+        if not enable_move or not allow_raw_xmlrpc_motion:
+            print("[RAW_NEWSPLINE] SAFETY LOCK: raw XML-RPC robot movement disabled")
+            print("[RAW_NEWSPLINE] Preview only, NewSpline was NOT sent")
+            return None
+
+        self._require_robot()
+        result = self.robot.NewSplineStart(int(spline_type), int(spline_average_time_ms))
+        print("[RAW_NEWSPLINE] NewSplineStart result:", result)
+        self._raise_if_error("NewSplineStart", result)
+
+        try:
+            point_results = []
+            for index, pose in enumerate(planned):
+                last_flag = 1 if index == len(planned) - 1 else 0
+                point_vel = max(1.0, float(vel) * float(speed_factors[index]))
+                result = self.robot.NewSplinePoint(
+                    desc_pos=pose,
+                    tool=self.tool,
+                    user=self.user,
+                    lastFlag=last_flag,
+                    vel=point_vel,
+                    acc=float(acc),
+                    blendR=float(blend_radius),
+                )
+                print(
+                    f"[RAW_NEWSPLINE] Point {index + 1}/{len(planned)} "
+                    f"vel={round(point_vel, 3)} lastFlag={last_flag} result:",
+                    result,
+                )
+                self._raise_if_error("NewSplinePoint", result)
+                point_results.append(result)
+        except Exception:
+            end_result = self.robot.NewSplineEnd()
+            print("[RAW_NEWSPLINE] NewSplineEnd after error:", end_result)
+            raise
+
+        end_result = self.robot.NewSplineEnd()
+        print("[RAW_NEWSPLINE] NewSplineEnd result:", end_result)
+        self._raise_if_error("NewSplineEnd", end_result)
+        return point_results + [end_result]
 
     def draw_line_air(
         self,
@@ -156,6 +231,7 @@ class FairinoRawXmlRpcController:
         approach_vel: float | None = None,
         enable_move: bool = False,
         allow_raw_xmlrpc_motion: bool = False,
+        blend_radius: float = -1.0,
     ):
         print("[RAW_DRAW_LINE_AIR] Start pose:", start_pose)
         print("[RAW_DRAW_LINE_AIR] End pose:", end_pose)
@@ -201,6 +277,7 @@ class FairinoRawXmlRpcController:
         approach_vel: float | None = None,
         enable_move: bool = False,
         allow_raw_xmlrpc_motion: bool = False,
+        blend_radius: float = -1.0,
     ):
         print("[RAW_DRAW_POLYLINE_AIR] Pose count:", len(poses))
         if not poses:
@@ -251,7 +328,16 @@ class FairinoRawXmlRpcController:
                 continue
 
             print(f"[RAW_DRAW_POLYLINE_AIR] MoveL point {index + 1}/{len(poses)}")
-            results.append(self.move_l(pose, vel, enable_move, allow_raw_xmlrpc_motion))
+            point_blend = blend_radius if index < len(poses) - 1 else -1.0
+            results.append(
+                self.move_l(
+                    pose,
+                    vel,
+                    enable_move,
+                    allow_raw_xmlrpc_motion,
+                    blend_radius=point_blend,
+                )
+            )
 
         if return_pose is not None:
             print("[RAW_DRAW_POLYLINE_AIR] Returning to configured corner pose after drawing")
@@ -280,6 +366,7 @@ class FairinoRawXmlRpcController:
         approach_vel: float | None = None,
         enable_move: bool = False,
         allow_raw_xmlrpc_motion: bool = False,
+        blend_radius: float = -1.0,
     ):
         print("[RAW_DRAW_STROKES] Stroke count:", len(strokes))
         if not strokes:
@@ -336,10 +423,27 @@ class FairinoRawXmlRpcController:
                 results.append(self.move_l(travel_pose, travel_speed, enable_move, allow_raw_xmlrpc_motion))
 
             print("[RAW_DRAW_STROKES] Lowering pen")
-            results.append(self.move_l(first_pose, travel_speed, enable_move, allow_raw_xmlrpc_motion))
+            results.append(
+                self.move_l(
+                    first_pose,
+                    travel_speed,
+                    enable_move,
+                    allow_raw_xmlrpc_motion,
+                    blend_radius=blend_radius,
+                )
+            )
             for point_index, pose in enumerate(stroke[1:], start=2):
                 print(f"[RAW_DRAW_STROKES] Stroke {stroke_index} MoveL point {point_index}/{len(stroke)}")
-                results.append(self.move_l(pose, vel, enable_move, allow_raw_xmlrpc_motion))
+                point_blend = blend_radius if point_index < len(stroke) else -1.0
+                results.append(
+                    self.move_l(
+                        pose,
+                        vel,
+                        enable_move,
+                        allow_raw_xmlrpc_motion,
+                        blend_radius=point_blend,
+                    )
+                )
 
             print("[RAW_DRAW_STROKES] Lifting pen")
             results.append(self.move_l(travel_pose, travel_speed, enable_move, allow_raw_xmlrpc_motion))
@@ -357,9 +461,153 @@ class FairinoRawXmlRpcController:
 
         return results
 
+    def draw_pose_strokes_smooth(
+        self,
+        strokes: list[list[list[float]]],
+        start_pose: list[float] | None = None,
+        return_pose: list[float] | None = None,
+        vel: float = 5.0,
+        travel_vel: float | None = None,
+        travel_z_offset: float = 20.0,
+        start_vel: float | None = None,
+        return_vel: float | None = None,
+        approach_with_move_j: bool = False,
+        approach_vel: float | None = None,
+        enable_move: bool = False,
+        allow_raw_xmlrpc_motion: bool = False,
+        blend_radius: float = 0.0,
+        acceleration: float = 0.0,
+        spline_type: int = 1,
+        spline_average_time_ms: int = 2000,
+        planner_config: SmoothMotionConfig | None = None,
+        fallback_to_blended_movel: bool = True,
+    ):
+        print("[RAW_DRAW_SMOOTH] Stroke count:", len(strokes))
+        if not strokes:
+            raise ValueError("strokes must not be empty")
+        if start_pose is not None:
+            print("[RAW_DRAW_SMOOTH] Start pose:", start_pose)
+        if return_pose is not None:
+            print("[RAW_DRAW_SMOOTH] Return pose:", return_pose)
+
+        print("[RAW_DRAW_SMOOTH] Checking robot status before motion")
+        self.get_controller_ip()
+        self.get_actual_tcp_pose()
+        self.get_robot_error_code()
+
+        travel_speed = travel_vel if travel_vel is not None else vel
+        results = []
+        if start_pose is not None:
+            print("[RAW_DRAW_SMOOTH] Moving to configured start pose")
+            if approach_with_move_j:
+                results.append(
+                    self.move_j_to_pose(
+                        start_pose,
+                        start_vel if start_vel is not None else approach_vel if approach_vel is not None else travel_speed,
+                        enable_move,
+                        allow_raw_xmlrpc_motion,
+                    )
+                )
+            else:
+                results.append(
+                    self.move_l(
+                        start_pose,
+                        start_vel if start_vel is not None else travel_speed,
+                        enable_move,
+                        allow_raw_xmlrpc_motion,
+                    )
+                )
+
+        for stroke_index, stroke in enumerate(strokes, start=1):
+            if len(stroke) < 2:
+                continue
+            planned_stroke = plan_pose_stroke(stroke, planner_config or SmoothMotionConfig())
+            first_pose = planned_stroke[0]
+            travel_pose = self._offset_pose_z(first_pose, travel_z_offset)
+            print(
+                f"[RAW_DRAW_SMOOTH] Stroke {stroke_index}/{len(strokes)} "
+                f"raw={len(stroke)} planned={len(planned_stroke)}"
+            )
+            if stroke_index == 1 and start_pose is None and approach_with_move_j:
+                results.append(
+                    self.move_j_to_pose(
+                        travel_pose,
+                        approach_vel if approach_vel is not None else travel_speed,
+                        enable_move,
+                        allow_raw_xmlrpc_motion,
+                    )
+                )
+            else:
+                results.append(self.move_l(travel_pose, travel_speed, enable_move, allow_raw_xmlrpc_motion))
+
+            print("[RAW_DRAW_SMOOTH] Lowering pen")
+            results.append(self.move_l(first_pose, travel_speed, enable_move, allow_raw_xmlrpc_motion))
+
+            try:
+                results.append(
+                    self.new_spline_stroke(
+                        planned_stroke,
+                        vel=vel,
+                        acc=acceleration,
+                        blend_radius=blend_radius,
+                        spline_type=spline_type,
+                        spline_average_time_ms=spline_average_time_ms,
+                        enable_move=enable_move,
+                        allow_raw_xmlrpc_motion=allow_raw_xmlrpc_motion,
+                        planner_config=planner_config,
+                    )
+                )
+            except Exception as exc:
+                if not fallback_to_blended_movel:
+                    raise
+                print("[RAW_DRAW_SMOOTH] NewSpline failed, falling back to blended MoveL:", exc)
+                for point_index, pose in enumerate(planned_stroke[1:], start=2):
+                    point_blend = blend_radius if point_index < len(planned_stroke) else -1.0
+                    results.append(
+                        self.move_l(
+                            pose,
+                            vel,
+                            enable_move,
+                            allow_raw_xmlrpc_motion,
+                            blend_radius=point_blend,
+                        )
+                    )
+
+            print("[RAW_DRAW_SMOOTH] Lifting pen")
+            results.append(self.move_l(travel_pose, travel_speed, enable_move, allow_raw_xmlrpc_motion))
+
+        if return_pose is not None:
+            print("[RAW_DRAW_SMOOTH] Returning to configured pose after drawing")
+            results.append(
+                self.move_l(
+                    return_pose,
+                    return_vel if return_vel is not None else travel_speed,
+                    enable_move,
+                    allow_raw_xmlrpc_motion,
+                )
+            )
+
+        return results
+
     def _require_raw(self) -> None:
         if self.raw is None:
             raise RuntimeError("Raw XML-RPC server is not connected")
+
+    def _require_robot(self) -> None:
+        if self.robot is None:
+            raise RuntimeError("Fairino SDK robot is not connected")
+
+    def _raise_if_error(self, command: str, result: Any) -> None:
+        if isinstance(result, int):
+            if result != 0:
+                raise RuntimeError(f"{command} failed: {result}")
+            return
+        if isinstance(result, list) and result:
+            if int(result[0]) != 0:
+                raise RuntimeError(f"{command} failed: {result}")
+            return
+        if result not in (0, None):
+            raise RuntimeError(f"{command} returned unexpected result: {result}")
 
     def _offset_pose_z(self, pose: list[float], z_offset: float) -> list[float]:
         lifted_pose = list(pose)
@@ -371,10 +619,11 @@ class FairinoRawXmlRpcController:
         pose: list[float],
         joint_pos: list[float],
         vel: float,
+        blend_radius: float = -1.0,
     ) -> list[float]:
         acc = 0.0
         ovl = 100.0
-        blend_r = -1.0
+        blend_r = float(blend_radius)
         blend_mode = 0
         exaxis_pos = [0.0, 0.0, 0.0, 0.0]
         search = 0

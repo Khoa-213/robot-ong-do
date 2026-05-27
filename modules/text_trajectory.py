@@ -1,10 +1,12 @@
 from typing import Any
 import unicodedata
+from pathlib import Path
 
-from matplotlib.font_manager import FontProperties
+from matplotlib.font_manager import FontProperties, findfont
 from matplotlib.textpath import TextPath
 
 from modules.paper_zone import build_pose_in_paper
+from modules.svg_trajectory import sample_svg_strokes
 
 
 Point = tuple[float, float]
@@ -69,8 +71,13 @@ def build_text_pose_strokes(config: dict[str, Any], text: str) -> list[list[list
         strokes = _text_polygons(
             text=text,
             font_family=str(demo.get("font_family", "DejaVu Sans")),
+            font_path=str(demo.get("font_path", "")).strip(),
             font_size=float(demo.get("font_size", 1.0)),
         )
+    elif mode in ("skeleton_svg", "svg_skeleton"):
+        strokes = _svg_skeleton_strokes(demo, text)
+    elif mode == "calligraphy":
+        strokes = _calligraphy_text_strokes(text)
     else:
         strokes = _single_line_text_strokes(text)
     normalized_strokes = fit_strokes_to_uv(
@@ -82,8 +89,9 @@ def build_text_pose_strokes(config: dict[str, Any], text: str) -> list[list[list
         invert_y=bool(demo.get("invert_y", True)),
     )
     max_points = int(demo.get("max_points_per_stroke", 48))
+    point_spacing = float(demo.get("point_spacing", 0.04))
     return [
-        [build_pose_in_paper(config, u, v) for u, v in _downsample_stroke(stroke, max_points)]
+        [build_pose_in_paper(config, u, v) for u, v in _prepare_stroke(stroke, max_points, point_spacing)]
         for stroke in normalized_strokes
         if len(stroke) >= 2
     ]
@@ -150,8 +158,12 @@ def fit_strokes_to_uv(
     return normalized
 
 
-def _text_polygons(text: str, font_family: str, font_size: float) -> list[list[Point]]:
-    path = TextPath((0.0, 0.0), text, size=font_size, prop=FontProperties(family=font_family))
+def _text_polygons(text: str, font_family: str, font_path: str, font_size: float) -> list[list[Point]]:
+    font = _font_properties(font_family, font_path)
+    try:
+        path = TextPath((0.0, 0.0), text, size=font_size, prop=font)
+    except FileNotFoundError:
+        path = TextPath((0.0, 0.0), text, size=font_size, prop=_family_font_properties(font_family))
     polygons = []
     for polygon in path.to_polygons():
         points = [(float(point[0]), float(point[1])) for point in polygon]
@@ -160,6 +172,86 @@ def _text_polygons(text: str, font_family: str, font_size: float) -> list[list[P
     if not polygons:
         raise ValueError(f"No drawable contours were generated for text: {text!r}")
     return polygons
+
+
+def _font_properties(font_family: str, font_path: str) -> FontProperties:
+    if not font_path:
+        return _family_font_properties(font_family)
+
+    path = Path(font_path)
+    if path.is_file():
+        return FontProperties(fname=str(path))
+
+    if not path.suffix:
+        for suffix in (".ttf", ".otf", ".ttc"):
+            candidate = path.with_suffix(suffix)
+            if candidate.is_file():
+                return FontProperties(fname=str(candidate))
+
+    return _family_font_properties(font_family)
+
+
+def _family_font_properties(font_family: str) -> FontProperties:
+    family = font_family or "DejaVu Sans"
+    try:
+        findfont(FontProperties(family=family), fallback_to_default=False)
+    except ValueError:
+        family = "DejaVu Sans"
+    return FontProperties(family=family)
+
+
+def _svg_skeleton_strokes(demo: dict[str, Any], text: str) -> list[list[Point]]:
+    skeletons = demo.get("skeleton_svgs", {})
+    skeleton_path = ""
+    if isinstance(skeletons, dict):
+        skeleton_path = str(skeletons.get(text, "")).strip()
+    if not skeleton_path:
+        skeleton_text = str(demo.get("skeleton_svg_text", "")).strip()
+        if skeleton_text and text != skeleton_text:
+            raise ValueError(
+                f"Configured skeleton SVG is for {skeleton_text!r}, but requested text is {text!r}. "
+                "Generate a matching skeleton SVG or add it to text_demo.skeleton_svgs."
+            )
+        skeleton_path = str(demo.get("skeleton_svg_path", "")).strip()
+    if not skeleton_path:
+        raise ValueError("text_demo.skeleton_svg_path is required when mode is skeleton_svg")
+
+    strokes = sample_svg_strokes(
+        Path(skeleton_path),
+        samples_per_path=int(demo.get("samples_per_path", demo.get("max_points_per_stroke", 120))),
+    )
+    return _order_strokes_nearest(strokes)
+
+
+def _order_strokes_nearest(strokes: list[list[Point]]) -> list[list[Point]]:
+    remaining = [stroke for stroke in strokes if len(stroke) >= 2]
+    ordered: list[list[Point]] = []
+    cursor: Point | None = None
+
+    while remaining:
+        if cursor is None:
+            index = min(range(len(remaining)), key=lambda item: _stroke_start_key(remaining[item]))
+            stroke = remaining.pop(index)
+        else:
+            options = [(item, False) for item in range(len(remaining))]
+            options.extend((item, True) for item in range(len(remaining)))
+            index, reverse = min(options, key=lambda option: _distance(cursor, remaining[option[0]][-1 if option[1] else 0]))
+            stroke = remaining.pop(index)
+            if reverse:
+                stroke = list(reversed(stroke))
+        ordered.append(stroke)
+        cursor = stroke[-1]
+    return ordered
+
+
+def _stroke_start_key(stroke: list[Point]) -> tuple[float, float]:
+    start, end = stroke[0], stroke[-1]
+    point = start if (start[1], start[0]) <= (end[1], end[0]) else end
+    return point[0], point[1]
+
+
+def _distance(start: Point, end: Point) -> float:
+    return ((end[0] - start[0]) ** 2 + (end[1] - start[1]) ** 2) ** 0.5
 
 
 def _single_line_text_strokes(text: str) -> list[list[Point]]:
@@ -183,6 +275,64 @@ def _single_line_text_strokes(text: str) -> list[list[Point]]:
     if not strokes:
         raise ValueError(f"No single-line glyphs were generated for text: {text!r}")
     return strokes
+
+
+def _calligraphy_text_strokes(text: str) -> list[list[Point]]:
+    strokes: list[list[Point]] = []
+    cursor_x = 0.0
+    for raw_char in text:
+        if raw_char.isspace():
+            cursor_x += SPACE_WIDTH
+            continue
+
+        base_char, marks = _split_base_and_marks(raw_char)
+        glyph = _calligraphy_glyph(base_char.lower())
+        if glyph is None:
+            cursor_x += GLYPH_WIDTH + GLYPH_GAP
+            continue
+
+        strokes.extend(_shift_strokes(glyph, cursor_x, 0.0))
+        strokes.extend(_accent_strokes(marks, cursor_x))
+        cursor_x += GLYPH_WIDTH + GLYPH_GAP
+
+    if not strokes:
+        raise ValueError(f"No calligraphy glyphs were generated for text: {text!r}")
+    return strokes
+
+
+def _calligraphy_glyph(char: str) -> Glyph | None:
+    glyphs: dict[str, Glyph] = {
+        "a": [[(0.15, 0.35), (0.28, 0.68), (0.62, 0.72), (0.82, 0.45), (0.68, 0.18), (0.35, 0.14), (0.18, 0.32), (0.38, 0.58), (0.78, 0.58), (0.86, 0.18)]],
+        "b": [[(0.22, 0.05), (0.2, 0.92), (0.42, 1.05), (0.52, 0.78), (0.35, 0.48), (0.58, 0.7), (0.9, 0.58), (0.82, 0.22), (0.48, 0.1), (0.28, 0.28)]],
+        "c": [[(0.82, 0.58), (0.58, 0.78), (0.22, 0.62), (0.12, 0.32), (0.34, 0.12), (0.78, 0.22)]],
+        "d": [[(0.82, 1.02), (0.72, 0.5), (0.78, 0.12), (0.58, 0.18), (0.32, 0.12), (0.14, 0.34), (0.3, 0.66), (0.65, 0.7), (0.84, 0.48), (0.95, 0.18)]],
+        "e": [[(0.16, 0.38), (0.45, 0.58), (0.78, 0.52), (0.58, 0.3), (0.2, 0.34), (0.32, 0.12), (0.78, 0.2)]],
+        "f": [[(0.62, 1.0), (0.38, 0.85), (0.42, 0.42), (0.34, -0.18), (0.1, -0.32), (0.0, -0.08), (0.5, 0.48), (0.82, 0.48)]],
+        "g": [[(0.78, 0.62), (0.52, 0.76), (0.2, 0.58), (0.16, 0.28), (0.42, 0.14), (0.72, 0.28), (0.78, 0.68), (0.62, -0.2), (0.28, -0.38), (0.08, -0.18), (0.32, 0.02)]],
+        "h": [[(0.2, 0.05), (0.18, 0.96), (0.42, 1.06), (0.55, 0.82), (0.28, 0.42), (0.48, 0.66), (0.78, 0.62), (0.78, 0.18), (0.94, 0.14)]],
+        "i": [[(0.42, 0.62), (0.34, 0.2), (0.5, 0.12), (0.68, 0.22)], [(0.45, 0.92), (0.47, 0.94)]],
+        "j": [[(0.56, 0.62), (0.4, -0.2), (0.16, -0.36), (0.0, -0.18), (0.24, 0.02)], [(0.58, 0.92), (0.6, 0.94)]],
+        "k": [[(0.2, 0.04), (0.18, 0.96), (0.44, 1.04), (0.48, 0.76), (0.2, 0.42), (0.78, 0.72), (0.36, 0.42), (0.86, 0.12)]],
+        "l": [[(0.28, 0.05), (0.28, 0.88), (0.46, 1.08), (0.62, 0.9), (0.45, 0.52), (0.34, 0.18), (0.62, 0.12), (0.8, 0.24)]],
+        "m": [[(0.12, 0.16), (0.22, 0.64), (0.42, 0.68), (0.42, 0.18), (0.56, 0.62), (0.78, 0.66), (0.78, 0.18), (0.96, 0.28)]],
+        "n": [[(0.12, 0.16), (0.22, 0.64), (0.48, 0.66), (0.48, 0.18), (0.72, 0.62), (0.92, 0.2)]],
+        "o": [[(0.46, 0.72), (0.18, 0.58), (0.12, 0.3), (0.34, 0.1), (0.72, 0.22), (0.82, 0.52), (0.58, 0.72), (0.36, 0.5), (0.66, 0.36), (0.94, 0.42)]],
+        "p": [[(0.18, -0.35), (0.2, 0.62), (0.5, 0.7), (0.82, 0.52), (0.76, 0.2), (0.44, 0.12), (0.22, 0.36)]],
+        "q": [[(0.78, 0.62), (0.52, 0.76), (0.2, 0.58), (0.16, 0.28), (0.42, 0.14), (0.72, 0.28), (0.78, 0.68), (0.76, -0.3), (1.0, -0.2)]],
+        "r": [[(0.16, 0.14), (0.24, 0.62), (0.44, 0.64), (0.54, 0.48), (0.72, 0.72), (0.92, 0.62)]],
+        "s": [[(0.78, 0.62), (0.48, 0.78), (0.18, 0.62), (0.34, 0.42), (0.72, 0.34), (0.74, 0.12), (0.34, 0.1), (0.12, 0.26)]],
+        "t": [[(0.44, 0.9), (0.36, 0.24), (0.54, 0.08), (0.78, 0.28)], [(0.18, 0.58), (0.72, 0.58)]],
+        "u": [[(0.16, 0.62), (0.18, 0.22), (0.42, 0.12), (0.68, 0.56), (0.68, 0.18), (0.88, 0.18)]],
+        "v": [[(0.14, 0.62), (0.36, 0.12), (0.72, 0.58), (0.9, 0.46)]],
+        "w": [[(0.12, 0.62), (0.28, 0.12), (0.48, 0.5), (0.66, 0.12), (0.9, 0.6)]],
+        "x": [[(0.16, 0.62), (0.78, 0.12)], [(0.8, 0.62), (0.18, 0.12)]],
+        "y": [[(0.14, 0.62), (0.34, 0.14), (0.72, 0.58), (0.54, -0.22), (0.18, -0.36), (0.02, -0.16), (0.28, 0.02)]],
+        "z": [[(0.16, 0.62), (0.78, 0.62), (0.22, 0.12), (0.84, 0.12)]],
+    }
+    if char == "đ":
+        base = glyphs["d"]
+        return [*base, [(0.36, 0.74), (0.9, 0.74)]]
+    return glyphs.get(char)
 
 
 def _split_base_and_marks(char: str) -> tuple[str, list[str]]:
@@ -225,12 +375,29 @@ def _accent_strokes(marks: list[str], offset_x: float) -> Glyph:
     return strokes
 
 
-def _downsample_stroke(stroke: list[Point], max_points: int) -> list[Point]:
-    if max_points <= 0 or len(stroke) <= max_points:
+def _prepare_stroke(stroke: list[Point], max_points: int, point_spacing: float) -> list[Point]:
+    dense = _densify_stroke(stroke, point_spacing)
+    if max_points <= 0 or len(dense) <= max_points:
+        return dense
+
+    step = max(len(dense) / max_points, 1.0)
+    sampled = [dense[int(index * step)] for index in range(max_points)]
+    if sampled[-1] != dense[-1]:
+        sampled.append(dense[-1])
+    return sampled
+
+
+def _densify_stroke(stroke: list[Point], point_spacing: float) -> list[Point]:
+    if point_spacing <= 0.0 or len(stroke) < 2:
         return stroke
 
-    step = max(len(stroke) / max_points, 1.0)
-    sampled = [stroke[int(index * step)] for index in range(max_points)]
-    if sampled[-1] != stroke[-1]:
-        sampled.append(stroke[-1])
-    return sampled
+    dense = [stroke[0]]
+    for start, end in zip(stroke, stroke[1:]):
+        dx = end[0] - start[0]
+        dy = end[1] - start[1]
+        distance = (dx * dx + dy * dy) ** 0.5
+        steps = max(int(distance / point_spacing), 1)
+        for index in range(1, steps + 1):
+            t = index / steps
+            dense.append((start[0] + dx * t, start[1] + dy * t))
+    return dense

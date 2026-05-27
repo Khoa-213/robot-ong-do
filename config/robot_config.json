@@ -2,7 +2,7 @@
   "robot_ip": "192.168.58.2",
   "tool": 0,
   "user": 0,
-  "default_vel": 20,
+  "default_vel": 10,
   "enable_robot_move": true,
   "connection_policy": {
     "command_port": 20003,
@@ -21,19 +21,19 @@
   },
   "paper": {
     "enabled": true,
-    "origin_x": -72.905,
-    "origin_y": 566.026,
-    "paper_z": 254.063,
-    "width_mm": 130.134,
-    "height_mm": 187.6,
+    "origin_x": -124.492,
+    "origin_y": 569.236,
+    "paper_z": 253.476,
+    "width_mm": 190.747,
+    "height_mm": 262.542,
     "margin_mm": 20.0,
     "coordinate_mode": "measured_corners",
-    "draw_orientation": [179.554, 1.428, -118.339],
+    "draw_orientation": [179.489, 3.456, -108.922],
     "corners": {
-      "top_left": [-72.905, 566.026, 254.059, 178.105, 6.628, -117.259],
-      "top_right": [57.222, 563.859, 254.065, 178.438, 5.884, -130.427],
-      "bottom_right": [54.994, 376.268, 254.059, -179.927, 2.518, -137.905],
-      "bottom_left": [-75.305, 379.196, 254.069, 179.554, 1.428, -118.339]
+      "top_left": [-124.492, 569.236, 253.287, 176.278, 10.429, -112.319],
+      "top_right": [62.352, 572.666, 253.348, 176.747, 9.436, -130.907],
+      "bottom_right": [64.666, 310.527, 253.799, 179.426, 3.599, -144.559],
+      "bottom_left": [-129.909, 306.357, 253.468, 179.489, 3.456, -108.922]
     }
   },
   "z_safety": {
@@ -70,11 +70,11 @@
     "square_half_v": 0.16,
     "triangle_radius_u": 0.18,
     "triangle_radius_v": 0.18,
-    "segments": 24,
-    "vel": 50
+    "segments": 72,
+    "vel": 12
   },
   "before_draw": {
-    "start_pose": [-79.006, 386.988, 326.726, 179.446, 3.677, -117.524],
+    "start_pose": [-138.678, 310.416, 325.389, -179.399, 0.999, -107.403],
     "start_vel": 20
   },
   "svg_demo": {
@@ -87,30 +87,59 @@
     "vel": 50
   },
   "text_demo": {
-    "mode": "single_line",
+    "mode": "outline",
     "continuous": false,
     "u_min": 0.2,
     "u_max": 0.8,
     "v_min": 0.2,
     "v_max": 0.8,
-    "font_family": "DejaVu Sans",
+    "font_family": "UTM ThuPhap Thien An",
+    "font_path": "C:/Users/anhkh/Downloads/b3e944603adb753797796a72d9ebbc32/Thư Pháp UTM Thien An/UTM ThuPhap Thien An.ttf",
     "font_size": 1.0,
     "invert_y": true,
-    "max_points_per_stroke": 48,
-    "vel": 20,
-    "travel_vel": 20,
+    "max_points_per_stroke": 120,
+    "point_spacing": 0.025,
+    "vel": 12,
+    "travel_vel": 18,
     "travel_z_offset": 20.0
   },
   "after_draw": {
     "return_to_bottom_left": true,
     "return_corner": "bottom_left",
-    "return_pose": [-79.006, 386.988, 326.726, 179.446, 3.677, -117.524],
+    "return_pose": [-138.678, 310.416, 325.389, -179.399, 0.999, -107.403],
     "return_vel": 20
   },
   "motion_strategy": {
+    "mode": "new_spline",
     "approach_with_move_j": true,
     "approach_vel": 20,
-    "draw_with_move_l": true
+    "draw_with_move_l": false,
+    "fallback_to_blended_movel": true,
+    "blend_radius": 2.0,
+    "acceleration": 0.0,
+    "spline_type": 1,
+    "spline_average_time_ms": 2000
+  },
+  "smooth_writing": {
+    "writing_speed_mm_s": 12,
+    "travel_speed_mm_s": 18,
+    "writing_z": 253.476,
+    "hover_z": 273.476,
+    "safe_z": 325.389,
+    "point_spacing_mm": 1.0,
+    "smoothing_tolerance": 0.35,
+    "min_point_distance_mm": 0.25,
+    "moving_average_window": 3,
+    "blend_radius_mm": 2.0,
+    "servo_period_ms": 8,
+    "acceleration": 0.0,
+    "corner_slowdown_angle_deg": 55.0,
+    "min_corner_speed_factor": 0.45,
+    "max_points_per_stroke": 220,
+    "min_workspace_x": -500.0,
+    "max_workspace_x": 500.0,
+    "min_workspace_y": -600.0,
+    "max_workspace_y": 600.0
   },
   "tool_do_gripper": {
     "enabled": false,

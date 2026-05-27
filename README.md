@@ -1,103 +1,98 @@
 # robot-ong-do
-AI-powered Vietnamese calligraphy robot demo using Fairino FR3 Cobot
 
-# AI Calligraphy Robot FR3
+Python demo for a Fairino FR3/FR5 robot that writes Vietnamese calligraphy from SVG files, built-in shapes, or keyboard text.
 
-This project is a recruitment/open-day demo using a Fairino FR5 cobot to write Vietnamese calligraphy based on user selection.
-
-## Concept
-
-Users select a Vietnamese calligraphy word from a web interface. The system loads a pre-designed SVG file, converts the SVG path into robot trajectory points, maps the points into the robot workspace, performs safety checks, and sends commands to the robot.
-
-## Demo Words
-
-- TÃ¢m
-- Tri thá»©c
-- SÃ¡ng táº¡o
-- TÆ°Æ¡ng lai
-- CÃ´ng nghá»‡
-- KhÃ¡t vá»ng
-
-## System Pipeline
-
-User selection  
-â†’ Load SVG  
-â†’ Parse SVG path  
-â†’ Sample Bezier curves  
-â†’ Scale to paper size  
-â†’ Map to robot coordinates  
-â†’ Safety check  
-â†’ Send trajectory to Fairino FR5  
-
-## Tech Stack
-
-- Python
-- svgpathtools
-- NumPy
-- OpenCV
-- Streamlit
-- Fairino SDK/API
-
-## Project Structure
+## Pipeline
 
 ```text
-assets/             SVG files and preview images
-config/             Robot and paper configuration
-src/                Main source code
-outputs/            Generated trajectories and logs
-tests/              Unit tests
-docs/               Project documentation
+SVG/text/shape
+-> sample into strokes
+-> fit into measured paper corners
+-> validate workspace and paper safe zone
+-> plan smooth stroke trajectory
+-> send Fairino motion command
 ```
 
-## Fairino FR3 safe air-line demo
+## Smooth Writing Mode
 
-Run from project root:
+The smooth path is the default for the main shape menu. It avoids writing by blocking at every waypoint.
+
+Current strategy:
+
+- Each character/stroke is kept as a continuous list of poses.
+- The pen only lifts between strokes, not between points in the same stroke.
+- The planner removes duplicated points, lightly smooths the path, resamples by fixed mm spacing, and slows down at sharp corners.
+- The Fairino controller uses `NewSplineStart`, `NewSplinePoint`, and `NewSplineEnd` for each stroke.
+- If `NewSpline` fails on the real controller, the code can fall back to `MoveL` with `blendR`.
+
+Main config lives in `config/robot_config.json`:
+
+- `motion_strategy.mode`: use `new_spline` for smooth writing.
+- `smooth_writing.writing_speed_mm_s`: writing speed.
+- `smooth_writing.travel_speed_mm_s`: speed while moving above paper.
+- `smooth_writing.point_spacing_mm`: planned distance between points.
+- `smooth_writing.smoothing_tolerance`: RDP simplification tolerance.
+- `smooth_writing.blend_radius_mm`: blend radius for fallback and spline points.
+- `text_demo.travel_z_offset`: pen lift height between strokes.
+- `paper.paper_z`: writing height.
+- `before_draw.start_pose` and `after_draw.return_pose`: safe start/end pose.
+
+Tuning guide:
+
+- Robot shakes or corners are too harsh: lower `writing_speed_mm_s`, lower `blend_radius_mm`, or increase `corner_slowdown_angle_deg`.
+- Robot is too slow: raise `writing_speed_mm_s` gradually, for example 12 -> 15 -> 18.
+- Letter shape looks distorted: lower `smoothing_tolerance` and lower `point_spacing_mm`.
+- Motion still looks dotted: use `motion_strategy.mode = "new_spline"` and keep `point_spacing_mm` around `0.8` to `1.2`.
+- Pen presses too hard: raise `paper.paper_z` slightly or increase `z_safety.z_lift_offset`.
+- Pen does not touch paper: lower `paper.paper_z` slightly.
+
+## Run
+
+Dry-run validation, no robot motion:
 
 ```powershell
-cd D:\robot-ong-do
-.venv\Scripts\activate
-
-python tests\test_import_fairino.py
-python tests\test_robot_connection.py
-python tests\test_robot_xmlrpc_status.py
-python tests\test_robot_raw_xmlrpc_status.py
-python tests\test_draw_line_air.py
-python tests\test_draw_line_measured_paper_air.py
-python tests\test_draw_line_measured_paper_raw_xmlrpc.py
-python tests\test_gripper_connection.py
-python tests\test_gripper_ping.py
-python tests\test_gripper_485_diagnostics.py
-python tests\test_gripper_setup_tool_end.py
-python tests\test_gripper_open_close.py
-python tests\test_tool_do0_gripper.py
+python tests\test_smooth_writing_menu.py --test line_50mm
+python tests\test_smooth_writing_menu.py --test oval
+python tests\test_smooth_writing_menu.py --test bezier
+python tests\test_draw_shape_menu_raw_xmlrpc.py --shape keyboard_text --text "Tâm" --dry-run
 ```
 
-Safety rules:
+Real robot motion requires the safety flags in `config/robot_config.json` and a typed confirmation:
 
-- `config/robot_config.json` keeps `"enable_robot_move": false` by default.
-- With movement disabled, `test_draw_line_air.py` only validates and prints the planned trajectory.
-- Only set `"enable_robot_move": true` after Emergency Stop is released, alarms are cleared, robot is enabled, WebApp jog has been tested, and SDK connection/ports are OK.
-- Do not run unknown poses.
-- Do not lower Z before paper/table calibration.
-- The first demo only draws one straight line in the air. It does not touch paper and does not use a gripper or pen.
-- For FR3 controllers that expose `20003` and `20004` but not `20005`, keep `allow_xmlrpc_motion_when_cnde_unavailable` false until XML-RPC status reads are verified and the robot is physically ready.
-- Raw XML-RPC motion is a compatibility path for this FR3 V6 controller. It requires both `"enable_robot_move": true` and `"allow_raw_xmlrpc_motion": true`.
-- The JODELL EPG40-050 gripper has its own safety lock. `test_gripper_open_close.py` only previews until `gripper.enable_gripper_motion` is true.
-- Before enabling gripper motion, keep fingers and the pen clear of the jaws, confirm 24V tool-end power, and confirm the configured Fairino gripper vendor/device matches the actual gripper.
-- If the gripper is wired as a simple valve/relay on tool DO0, use `python tests\test_tool_do0_gripper.py`. This sends `SetToolDO(id=0, status=1)` to close and `SetToolDO(id=0, status=0)` to open only after `tool_do_gripper.enable_tool_do_gripper=true` and `--apply`.
+```powershell
+python tests\test_smooth_writing_menu.py --test line_50mm --apply
+python tests\test_draw_shape_menu_raw_xmlrpc.py --shape keyboard_text --text "Tâm"
+```
 
-Gripper notes:
+To skip the prompt only when the robot is physically ready:
 
-- The mounted gripper label reads `JODELL EPG40-050`, `24V`, max current about `0.85A`.
-- The first connection test uses Fairino's built-in gripper XML-RPC methods: `GetGripperConfig`, `SetGripperConfig`, `ActGripper`, and `MoveGripper`.
-- `config/robot_config.json` currently uses `company=4`, `device=0` because a Fairino SDK gripper example uses that pair. If activation still returns an error, run `python tests\test_gripper_menu.py --action scan_config --apply` to compare the built-in Fairino gripper drivers, or use the vendor tool-end Lua protocol file.
-- If WebApp shows `Gripper 485 timeout`, run `python tests\test_gripper_485_diagnostics.py` and keep `gripper.enable_gripper_motion=false`. This usually means the controller cannot talk to the gripper over tool-end RS485: power, A/B wiring, baud rate, address, vendor/device, or end Lua/protocol setup is wrong.
-- To configure tool-end RS485/Lua gripper path without moving the gripper, first preview with `python tests\test_gripper_setup_tool_end.py`, then apply with `python tests\test_gripper_setup_tool_end.py --apply`.
+```powershell
+python tests\test_smooth_writing_menu.py --test line_50mm --apply --yes
+```
 
-Paper calibration notes:
+## Shape Menu
 
-- Step 1: jog robot to the upper-left paper corner, then save `origin_x`, `origin_y`, and `paper_z`.
-- Step 2: measure the real paper `width_mm` and `height_mm`.
-- Step 3: set a safe `margin_mm`.
-- Step 4: run the air-line test first.
-- Step 5: only after the air test is safe, test write Z offsets.
+```powershell
+python tests\test_draw_shape_menu_raw_xmlrpc.py
+```
+
+Available actions include lines, circle, square, triangle, `tam`, `tam1`, `paper_corners`, and `keyboard_text`.
+
+## Safety
+
+- Always test with `--dry-run` first.
+- Validate the four paper corners and `paper.paper_z` before touching paper.
+- Keep `enable_robot_move` and `connection_policy.allow_raw_xmlrpc_motion` disabled unless the robot is clear and ready.
+- The script validates workspace and paper polygon before motion.
+- Real motion asks for `RUN` before sending commands unless `--yes` is used.
+- Do not increase speed aggressively; tune in small steps.
+
+## Important Files
+
+- `config/robot_config.json`: robot, paper, Z height, and smooth writing parameters.
+- `modules/trajectory_planner.py`: stroke cleanup, smoothing, resampling, and corner speed profiling.
+- `modules/fairino_raw_controller.py`: Fairino raw XML-RPC and smooth `NewSpline` execution.
+- `modules/text_trajectory.py`: keyboard text and calligraphy-style single-line glyphs.
+- `modules/svg_trajectory.py`: SVG path sampling.
+- `tests/test_draw_shape_menu_raw_xmlrpc.py`: main interactive menu.
+- `tests/test_smooth_writing_menu.py`: focused smooth-writing tests.
