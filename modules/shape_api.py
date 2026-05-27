@@ -13,6 +13,7 @@ SHAPE_NAMES = (
     "line_diagonal_up",
     "circle",
     "square",
+    "rectangle",
     "triangle",
     "tam",
     "tam1",
@@ -39,6 +40,8 @@ def build_shape_poses(config: dict[str, Any], shape_name: str) -> list[list[floa
         return _build_circle(config, shape_config)
     if shape_name == "square":
         return _build_square(config, shape_config)
+    if shape_name == "rectangle":
+        return _build_rectangle(config, shape_config)
     if shape_name == "triangle":
         return _build_triangle(config, shape_config)
     if shape_name in ("tam", "tam_old"):
@@ -75,6 +78,21 @@ def _build_square(config: dict[str, Any], shape_config: dict[str, Any]) -> list[
     center_v = float(shape_config.get("center_v", 0.5))
     half_u = float(shape_config.get("square_half_u", 0.16))
     half_v = float(shape_config.get("square_half_v", 0.16))
+    points = [
+        (center_u - half_u, center_v - half_v),
+        (center_u + half_u, center_v - half_v),
+        (center_u + half_u, center_v + half_v),
+        (center_u - half_u, center_v + half_v),
+        (center_u - half_u, center_v - half_v),
+    ]
+    return _build_line(config, points)
+
+
+def _build_rectangle(config: dict[str, Any], shape_config: dict[str, Any]) -> list[list[float]]:
+    center_u = float(shape_config.get("center_u", 0.5))
+    center_v = float(shape_config.get("center_v", 0.5))
+    half_u = float(shape_config.get("square_half_u", 0.2))
+    half_v = float(shape_config.get("square_half_v", 0.12))
     points = [
         (center_u - half_u, center_v - half_v),
         (center_u + half_u, center_v - half_v),
