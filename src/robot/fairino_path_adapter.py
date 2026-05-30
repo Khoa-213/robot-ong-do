@@ -158,6 +158,30 @@ def dry_run_print_pose_strokes(strokes: list[list[Pose]], safe_z: float = 20.0) 
         print(f"[DRY_RUN] stroke {stroke_index}: pen up {[first[0], first[1], round(first[2] + safe_z, 3), *first[3:]]}")
 
 
+def export_pose_strokes_json(strokes: list[list[Pose]], output_path: str) -> None:
+    data = []
+    for stroke_index, stroke in enumerate(strokes, start=1):
+        data.append(
+            {
+                "stroke_id": stroke_index,
+                "poses": [
+                    {
+                        "x": pose[0],
+                        "y": pose[1],
+                        "z": pose[2],
+                        "rx": pose[3],
+                        "ry": pose[4],
+                        "rz": pose[5],
+                    }
+                    for pose in stroke
+                ],
+            }
+        )
+    path = Path(output_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 def connect_nearby_pose_strokes(strokes: list[list[Pose]], max_gap_mm: float = 8.0) -> list[list[Pose]]:
     if max_gap_mm <= 0 or len(strokes) <= 1:
         return [[list(pose) for pose in stroke] for stroke in strokes]
@@ -191,6 +215,52 @@ def connect_nearby_pose_strokes(strokes: list[list[Pose]], max_gap_mm: float = 8
                 changed = True
         connected.append(current)
     return connected
+
+
+def prune_short_pose_strokes(strokes: list[list[Pose]], min_length_mm: float = 12.0) -> list[list[Pose]]:
+    if min_length_mm <= 0:
+        return [[list(pose) for pose in stroke] for stroke in strokes]
+    kept = []
+    for stroke in strokes:
+        if len(stroke) < 2:
+            continue
+        if _pose_stroke_length(stroke) >= min_length_mm:
+            kept.append([list(pose) for pose in stroke])
+    return kept
+
+
+def trim_pose_stroke_ends(strokes: list[list[Pose]], trim_mm: float = 0.0) -> list[list[Pose]]:
+    if trim_mm <= 0:
+        return [[list(pose) for pose in stroke] for stroke in strokes]
+    trimmed = []
+    for stroke in strokes:
+        next_stroke = _trim_pose_stroke_start(stroke, trim_mm)
+        next_stroke = list(reversed(_trim_pose_stroke_start(list(reversed(next_stroke)), trim_mm)))
+        if len(next_stroke) >= 2:
+            trimmed.append(next_stroke)
+    return trimmed
+
+
+def _pose_stroke_length(stroke: list[Pose]) -> float:
+    return sum(_pose_xy_distance(start, end) for start, end in zip(stroke, stroke[1:]))
+
+
+def _trim_pose_stroke_start(stroke: list[Pose], trim_mm: float) -> list[Pose]:
+    if len(stroke) < 2:
+        return [list(pose) for pose in stroke]
+    remaining = float(trim_mm)
+    for index, (start, end) in enumerate(zip(stroke, stroke[1:])):
+        segment = _pose_xy_distance(start, end)
+        if segment <= 1e-9:
+            continue
+        if remaining < segment:
+            ratio = remaining / segment
+            first = list(start)
+            for axis in range(3):
+                first[axis] = round(float(start[axis]) + (float(end[axis]) - float(start[axis])) * ratio, 3)
+            return [first] + [list(pose) for pose in stroke[index + 1 :]]
+        remaining -= segment
+    return []
 
 
 def _pose_xy_distance(a: Pose, b: Pose) -> float:

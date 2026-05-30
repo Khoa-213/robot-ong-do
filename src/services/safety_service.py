@@ -1,6 +1,6 @@
 from typing import Any
 
-from modules.paper_zone import point_inside_convex_polygon_xy
+from modules.paper_zone import CORNER_KEYS, get_paper_corners, point_inside_convex_polygon_xy
 from modules.safety_check import validate_pose as validate_pose_workspace
 from modules.safety_check import validate_measured_paper_poses
 
@@ -37,6 +37,20 @@ def validate_start_end_in_corners(
     end_pose: list[float],
 ) -> dict[str, bool]:
     return {
+        "start_inside": validate_point_in_corners(corners, start_pose),
+        "end_inside": validate_point_in_corners(corners, end_pose),
+    }
+
+
+def validate_start_end_in_current_corners(
+    start_pose: list[float],
+    end_pose: list[float],
+) -> dict[str, Any]:
+    config = get_config()
+    corners_by_name = get_paper_corners(config)
+    corners = [corners_by_name[key] for key in CORNER_KEYS]
+    return {
+        "corners": corners_by_name,
         "start_inside": validate_point_in_corners(corners, start_pose),
         "end_inside": validate_point_in_corners(corners, end_pose),
     }

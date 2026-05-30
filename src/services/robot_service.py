@@ -6,12 +6,14 @@ from typing import Any
 from modules.fairino_controller import FairinoController
 from modules.fairino_raw_controller import FairinoRawXmlRpcController
 from modules.paper_zone import (
+    CORNER_KEYS,
     build_circle_demo_poses,
     build_lifted_corner_pose,
     build_line_demo_poses,
     build_pose_in_paper,
     get_paper_corners,
     paper_size_from_corners,
+    validate_pose_inside_paper_corners,
 )
 from modules.safety_check import validate_measured_paper_poses, validate_pose_workspace
 from modules.shape_api import build_shape_pose_strokes
@@ -122,40 +124,9 @@ def move_to_start(vel: float | None) -> dict[str, Any]:
 
 def draw_line_demo(vel: float | None) -> dict[str, Any]:
     config = get_config()
-    motion_strategy = config.get("motion_strategy", {})
     start_pose, end_pose = build_line_demo_poses(config)
-    return_pose, return_pose_uses_paper_corner = _configured_return_pose(config)
     poses = [start_pose, end_pose]
-
-    validate_measured_paper_poses(poses, config)
-    _validate_return_pose(config, return_pose, return_pose_uses_paper_corner)
-
-    velocity = float(vel) if vel is not None else float(config.get("default_vel", 10))
-    enable_move, allow_raw_motion = _motion_flags(config)
-    controller = _raw_controller(config)
-    try:
-        controller.connect()
-        results = controller.draw_line_air(
-            start_pose=start_pose,
-            end_pose=end_pose,
-            return_pose=return_pose,
-            vel=velocity,
-            return_vel=float(config.get("after_draw", {}).get("return_vel", config.get("default_vel", 10))),
-            approach_with_move_j=bool(motion_strategy.get("approach_with_move_j", False)),
-            approach_vel=float(motion_strategy.get("approach_vel", config.get("default_vel", 10))),
-            enable_move=enable_move,
-            allow_raw_xmlrpc_motion=allow_raw_motion,
-        )
-    finally:
-        controller.disconnect()
-
-    return {
-        "pose_count": len(poses),
-        "return_pose": return_pose,
-        "enable_move": enable_move,
-        "allow_raw_xmlrpc_motion": allow_raw_motion,
-        "result": results,
-    }
+    return _draw_polyline(config, poses, vel, float(config.get("default_vel", 10)))
 
 
 def draw_circle_demo(vel: float | None) -> dict[str, Any]:
@@ -264,6 +235,7 @@ def draw_shape(shape_name: str, vel: float | None) -> dict[str, Any]:
         tool=int(config.get("tool", 0)),
         user=int(config.get("user", 0)),
     )
+    _configure_paper_guard(controller, config)
 
     try:
         controller.connect()
@@ -293,21 +265,28 @@ def draw_shape(shape_name: str, vel: float | None) -> dict[str, Any]:
     }
 
 
-def draw_paper_corners(corners: list[list[float]], vel: float | None) -> dict[str, Any]:
-    if len(corners) != 4:
-        raise ValueError("corners must have exactly 4 points")
-
+def draw_paper_corners(corners: list[list[float]] | None, vel: float | None) -> dict[str, Any]:
     config = get_config()
     policy = config.get("connection_policy", {})
     motion_strategy = config.get("motion_strategy", {})
 
-    poses = [list(corner) for corner in corners]
+    if corners is None:
+        current_corners = get_paper_corners(config)
+        poses = [current_corners[key] for key in CORNER_KEYS]
+        source = "config.paper.corners"
+    else:
+        if len(corners) != 4:
+            raise ValueError("corners must have exactly 4 points")
+        poses = [list(corner) for corner in corners]
+        source = "request.corners"
+
     for index, pose in enumerate(poses):
         if len(pose) < 6:
             raise ValueError(f"corner[{index}] must have 6 values [x, y, z, rx, ry, rz]")
 
     for pose in poses:
         validate_pose_workspace(pose, config["robot_workspace"])
+        validate_pose_inside_paper_corners(pose, config)
 
     enable_move = bool(config.get("enable_robot_move", False))
     allow_raw_motion = bool(policy.get("allow_raw_xmlrpc_motion", False))
@@ -318,12 +297,15 @@ def draw_paper_corners(corners: list[list[float]], vel: float | None) -> dict[st
         tool=int(config.get("tool", 0)),
         user=int(config.get("user", 0)),
     )
+    _configure_paper_guard(controller, config)
 
     try:
         controller.connect()
         results = controller.draw_polyline_air(
             poses=poses,
+            start_pose=config.get("before_draw", {}).get("start_pose"),
             vel=velocity,
+            start_vel=float(config.get("before_draw", {}).get("start_vel", config.get("default_vel", 10))),
             approach_with_move_j=bool(motion_strategy.get("approach_with_move_j", False)),
             approach_vel=float(motion_strategy.get("approach_vel", config.get("default_vel", 10))),
             enable_move=enable_move,
@@ -333,6 +315,8 @@ def draw_paper_corners(corners: list[list[float]], vel: float | None) -> dict[st
         controller.disconnect()
 
     return {
+        "source": source,
+        "corner_order": list(CORNER_KEYS),
         "pose_count": len(poses),
         "enable_move": enable_move,
         "allow_raw_xmlrpc_motion": allow_raw_motion,
@@ -345,6 +329,18 @@ def _raw_controller(config: dict[str, Any]) -> FairinoRawXmlRpcController:
         robot_ip=str(config["robot_ip"]),
         tool=int(config.get("tool", 0)),
         user=int(config.get("user", 0)),
+    )
+
+
+def _configure_paper_guard(controller: FairinoRawXmlRpcController, config: dict[str, Any]) -> None:
+    before_draw = config.get("before_draw", {})
+    return_pose, _uses_paper_corner = _configured_return_pose(config)
+    controller.set_paper_guard(
+        config,
+        allowed_poses=[
+            before_draw.get("start_pose"),
+            return_pose,
+        ],
     )
 
 
@@ -402,6 +398,7 @@ def _draw_polyline(config: dict[str, Any], poses: list[list[float]], vel: float 
     enable_move, allow_raw_motion = _motion_flags(config)
     velocity = float(vel) if vel is not None else default_vel
     controller = _raw_controller(config)
+    _configure_paper_guard(controller, config)
     try:
         controller.connect()
         results = controller.draw_polyline_air(
@@ -463,6 +460,7 @@ def _draw_pose_strokes(
     blend_radius = float(smooth_config.get("blend_radius_mm", motion_strategy.get("blend_radius", 0.0)))
 
     controller = _raw_controller(config)
+    _configure_paper_guard(controller, config)
     try:
         controller.connect()
         if use_smooth:

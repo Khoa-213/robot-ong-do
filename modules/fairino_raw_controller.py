@@ -1,5 +1,6 @@
 from typing import Any
 
+from modules.paper_zone import validate_pose_inside_paper_corners
 from modules.sdk_path import setup_fairino_sdk_path
 from modules.trajectory_planner import (
     SmoothMotionConfig,
@@ -15,6 +16,8 @@ class FairinoRawXmlRpcController:
         self.user = int(user)
         self.robot: Any | None = None
         self.raw: Any | None = None
+        self.paper_guard_config: dict[str, Any] | None = None
+        self.paper_guard_allowed_poses: list[list[float]] = []
 
     def connect(self) -> bool:
         print(f"[RAW_CONNECT] Preparing Fairino SDK import for robot {self.robot_ip}")
@@ -32,6 +35,32 @@ class FairinoRawXmlRpcController:
         if self.robot is not None and hasattr(self.robot, "CloseRPC"):
             print("[RAW_DISCONNECT] Calling robot.CloseRPC()")
             self.robot.CloseRPC()
+
+    def set_paper_guard(
+        self,
+        config: dict[str, Any] | None,
+        allowed_poses: list[list[float] | None] | None = None,
+    ) -> None:
+        self.paper_guard_config = config
+        self.paper_guard_allowed_poses = [list(pose) for pose in (allowed_poses or []) if pose is not None]
+
+    def stop_motion(self):
+        results = []
+        for target in (self.robot, self.raw):
+            if target is None:
+                continue
+            for method_name in ("StopMotion", "ProgramStop", "CNDESendStop"):
+                if not hasattr(target, method_name):
+                    continue
+                try:
+                    result = getattr(target, method_name)()
+                    print(f"[RAW_STOP] {method_name} result:", result)
+                    results.append((method_name, result))
+                    return results
+                except Exception as exc:
+                    print(f"[RAW_STOP] {method_name} failed:", exc)
+                    results.append((method_name, str(exc)))
+        return results
 
     def get_controller_ip(self):
         self._require_raw()
@@ -99,6 +128,7 @@ class FairinoRawXmlRpcController:
         print("[RAW_MOVEJ] enable_move:", enable_move)
         print("[RAW_MOVEJ] allow_raw_xmlrpc_motion:", allow_raw_xmlrpc_motion)
 
+        self._check_paper_guard_target(pose, "MoveJ target", enable_move and allow_raw_xmlrpc_motion)
         joint_pos = self.resolve_joint_for_pose(pose)
         print("[RAW_MOVEJ] IK joint_pos:", joint_pos)
 
@@ -122,6 +152,7 @@ class FairinoRawXmlRpcController:
             [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
         )
         print("[RAW_MOVEJ] raw MoveJ result:", result)
+        self._check_paper_guard_actual("MoveJ actual TCP pose", enable_move and allow_raw_xmlrpc_motion)
         return result
 
     def move_l(
@@ -138,6 +169,7 @@ class FairinoRawXmlRpcController:
         print("[RAW_MOVEL] enable_move:", enable_move)
         print("[RAW_MOVEL] allow_raw_xmlrpc_motion:", allow_raw_xmlrpc_motion)
 
+        self._check_paper_guard_target(pose, "MoveL target", enable_move and allow_raw_xmlrpc_motion)
         joint_pos = self.get_inverse_kin(pose)
         print("[RAW_MOVEL] IK joint_pos:", joint_pos)
 
@@ -150,6 +182,7 @@ class FairinoRawXmlRpcController:
         print("[RAW_MOVEL] Sending raw MoveL params:", params)
         result = self.raw.MoveL(params)
         print("[RAW_MOVEL] raw MoveL result:", result)
+        self._check_paper_guard_actual("MoveL actual TCP pose", enable_move and allow_raw_xmlrpc_motion)
         return result
 
     def new_spline_stroke(
@@ -169,6 +202,8 @@ class FairinoRawXmlRpcController:
 
         planned = plan_pose_stroke(poses, planner_config or SmoothMotionConfig())
         speed_factors = stroke_speed_factors(planned, planner_config or SmoothMotionConfig())
+        for pose in planned:
+            self._check_paper_guard_target(pose, "NewSpline target", enable_move and allow_raw_xmlrpc_motion)
         print("[RAW_NEWSPLINE] Original point count:", len(poses))
         print("[RAW_NEWSPLINE] Planned point count:", len(planned))
         print("[RAW_NEWSPLINE] Velocity:", vel)
@@ -218,6 +253,7 @@ class FairinoRawXmlRpcController:
         end_result = self.robot.NewSplineEnd()
         print("[RAW_NEWSPLINE] NewSplineEnd result:", end_result)
         self._raise_if_error("NewSplineEnd", end_result)
+        self._check_paper_guard_actual("NewSpline actual TCP pose", enable_move and allow_raw_xmlrpc_motion)
         return point_results + [end_result]
 
     def draw_line_air(
@@ -613,6 +649,49 @@ class FairinoRawXmlRpcController:
         lifted_pose = list(pose)
         lifted_pose[2] = round(float(lifted_pose[2]) + float(z_offset), 3)
         return lifted_pose
+
+    def _check_paper_guard_target(self, pose: list[float], label: str, should_stop: bool) -> None:
+        if self.paper_guard_config is None or self._pose_is_guard_allowed(pose):
+            return
+        try:
+            validate_pose_inside_paper_corners(pose, self.paper_guard_config)
+        except Exception as exc:
+            if should_stop:
+                self.stop_motion()
+            raise RuntimeError(f"{label} is outside measured paper zone; motion stopped: {exc}") from exc
+
+    def _check_paper_guard_actual(self, label: str, should_stop: bool) -> None:
+        if self.paper_guard_config is None or not should_stop:
+            return
+        try:
+            pose = self._extract_tcp_pose(self.get_actual_tcp_pose())
+        except Exception as exc:
+            print(f"[RAW_PAPER_GUARD] Could not read actual TCP pose after motion: {exc}")
+            return
+        if self._pose_is_guard_allowed(pose):
+            return
+        try:
+            validate_pose_inside_paper_corners(pose, self.paper_guard_config)
+        except Exception as exc:
+            self.stop_motion()
+            raise RuntimeError(f"{label} is outside measured paper zone; motion stopped: {exc}") from exc
+
+    def _pose_is_guard_allowed(self, pose: list[float]) -> bool:
+        for allowed in self.paper_guard_allowed_poses:
+            if len(allowed) >= 6 and all(abs(float(pose[i]) - float(allowed[i])) <= 0.5 for i in range(6)):
+                return True
+        return False
+
+    def _extract_tcp_pose(self, result: Any) -> list[float]:
+        if isinstance(result, list) and len(result) >= 7 and result[0] == 0:
+            return [float(value) for value in result[1:7]]
+        if isinstance(result, list) and len(result) >= 2 and result[0] == 0 and isinstance(result[1], list):
+            return [float(value) for value in result[1][:6]]
+        if isinstance(result, tuple) and len(result) >= 2 and result[0] == 0 and isinstance(result[1], list):
+            return [float(value) for value in result[1][:6]]
+        if isinstance(result, list) and len(result) >= 6:
+            return [float(value) for value in result[:6]]
+        raise RuntimeError(f"Cannot parse TCP pose result: {result}")
 
     def _build_raw_movel_params(
         self,

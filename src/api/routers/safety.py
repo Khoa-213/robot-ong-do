@@ -3,7 +3,7 @@ from typing import Any
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
-from src.services.safety_service import validate_pose, validate_poses, validate_start_end_in_corners
+from src.services.safety_service import validate_pose, validate_poses, validate_start_end_in_current_corners
 
 router = APIRouter()
 
@@ -27,19 +27,12 @@ class PosesRequest(BaseModel):
 
 
 class PaperPointRequest(BaseModel):
-    corners: list[list[float]] = Field(..., min_length=4, max_length=4)
     start_pose: list[float] = Field(..., min_length=6, max_length=6)
     end_pose: list[float] = Field(..., min_length=6, max_length=6)
 
     class Config:
         json_schema_extra = {
             "example": {
-                "corners": [
-                    [-72.905, 566.026, 254.059, 178.105, 6.628, -117.259],
-                    [57.222, 563.859, 254.065, 178.438, 5.884, -130.427],
-                    [54.994, 376.268, 254.059, -179.927, 2.518, -137.905],
-                    [-75.305, 379.196, 254.069, 179.554, 1.428, -118.339],
-                ],
                 "start_pose": [82.858, -229.638, 752.628, 12.552, -0.323, 143.515],
                 "end_pose": [132.858, -229.638, 752.628, 12.552, -0.323, 143.515],
             }
@@ -68,7 +61,7 @@ def safety_validate_poses(payload: PosesRequest) -> dict[str, Any]:
 
 @router.post(
     "/validate_paper_point",
-    summary="Validate start/end points inside 4 paper corners",
+    summary="Validate start/end points inside current config paper corners",
     responses={
         200: {
             "content": {
@@ -80,5 +73,5 @@ def safety_validate_poses(payload: PosesRequest) -> dict[str, Any]:
     },
 )
 def safety_validate_paper_point(payload: PaperPointRequest) -> dict[str, Any]:
-    result = validate_start_end_in_corners(payload.corners, payload.start_pose, payload.end_pose)
+    result = validate_start_end_in_current_corners(payload.start_pose, payload.end_pose)
     return {"ok": True, **result}

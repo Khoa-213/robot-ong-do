@@ -8,6 +8,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from matplotlib import font_manager
 from matplotlib.font_manager import FontProperties, findfont
 
 from src.outline_to_skeleton import export_debug_svg, export_robot_json, text_to_robot_paths
@@ -15,9 +16,20 @@ from modules.safety_check import validate_pose_workspace
 from src.robot.fairino_path_adapter import (
     connect_nearby_pose_strokes,
     dry_run_print_pose_strokes,
+    export_pose_strokes_json,
     load_robot_paths,
+    prune_short_pose_strokes,
     robot_paths_to_measured_paper_poses,
+    trim_pose_stroke_ends,
 )
+
+
+def _default_low_artifact_font_family() -> str:
+    available = {font.name for font in font_manager.fontManager.ttflist}
+    for family in ("Segoe Print", "Ink Free", "Comic Sans MS", "Arial Rounded MT Bold", "Segoe UI"):
+        if family in available:
+            return family
+    return "DejaVu Sans"
 
 
 def main() -> None:
@@ -26,13 +38,24 @@ def main() -> None:
     )
     parser.add_argument("--text", help="Text to write. If omitted, prompt from keyboard.")
     parser.add_argument("--font", help="Optional .ttf/.otf font path. Defaults to DejaVu Sans.")
+    parser.add_argument(
+        "--font-family",
+        default="",
+        help="Font family name when --font is omitted. Example: 'Segoe Print', 'Comic Sans MS', 'Arial Rounded MT Bold'.",
+    )
     parser.add_argument("--config", default=str(ROOT / "config" / "robot_config.json"))
     parser.add_argument("--out", default=str(ROOT / "output" / "keyboard_robot_path.json"))
     parser.add_argument("--debug-svg", default=str(ROOT / "output" / "keyboard_centerline.svg"))
+    parser.add_argument("--pose-json", default=str(ROOT / "output" / "keyboard_robot_poses.json"))
     parser.add_argument("--font-size", type=int, default=200)
     parser.add_argument("--resolution", type=float, default=2.0)
     parser.add_argument("--z-light", type=float, default=-0.5)
     parser.add_argument("--z-heavy", type=float, default=-3.0)
+    parser.add_argument("--path-spacing", type=float, default=1.0, help="Centerline point spacing before paper fit.")
+    parser.add_argument("--min-branch", type=float, default=2.0, help="Drop skeleton branches shorter than this source-unit length.")
+    parser.add_argument("--smooth-window", type=int, default=3, help="Moving average window for centerline points.")
+    parser.add_argument("--simplify", type=float, default=0.05, help="RDP simplify tolerance for centerline points.")
+    parser.add_argument("--max-points-per-stroke", type=int, default=600)
     parser.add_argument("--safe-z", type=float, help="Pen lift height between strokes.")
     parser.add_argument("--margin", type=float, help="Paper margin in mm. Defaults to config paper.margin_mm.")
     parser.add_argument("--fit-width", type=float, default=90.0, help="Target text width on paper in mm.")
@@ -43,13 +66,31 @@ def main() -> None:
     parser.add_argument("--travel-vel", type=float, help="Travel velocity while pen is lifted.")
     parser.add_argument("--connect-gap", type=float, default=8.0, help="Connect stroke endpoints closer than this many mm.")
     parser.add_argument("--no-connect", action="store_true", help="Disable nearby stroke connection.")
+    parser.add_argument(
+        "--prune-tip-length",
+        type=float,
+        default=28.0,
+        help="Drop skeleton strokes shorter than this many robot mm to remove cap roots.",
+    )
+    parser.add_argument("--no-prune-tips", action="store_true", help="Keep short skeleton cap/root branches.")
+    parser.add_argument(
+        "--trim-ends",
+        type=float,
+        default=3.0,
+        help="Trim this many mm from each final stroke end to remove remaining root tails.",
+    )
     parser.add_argument("--apply", action="store_true", help="Send motion to robot. Without this, only dry-run.")
     parser.add_argument("--yes", action="store_true", help="Skip RUN confirmation when --apply is used.")
     parser.add_argument("--verbose", action="store_true", help="Print every planned MoveL during dry-run.")
     parser.add_argument(
         "--return-start-only",
         action="store_true",
-        help="Only move to the lifted first pose for this text path; do not write.",
+        help="Deprecated alias of --return-home-only.",
+    )
+    parser.add_argument(
+        "--return-home-only",
+        action="store_true",
+        help="Only move to after_draw.return_pose; do not write.",
     )
     parser.add_argument(
         "--no-return-start",
@@ -65,7 +106,8 @@ def main() -> None:
     if not text:
         raise ValueError("Text must not be empty")
 
-    font_path = Path(args.font) if args.font else Path(findfont(FontProperties(family="DejaVu Sans")))
+    font_family = args.font_family.strip() or _default_low_artifact_font_family()
+    font_path = Path(args.font) if args.font else Path(findfont(FontProperties(family=font_family)))
     if not font_path.is_file():
         raise FileNotFoundError(f"Font not found: {font_path}")
 
@@ -85,6 +127,11 @@ def main() -> None:
         resolution=args.resolution,
         z_light=args.z_light,
         z_heavy=args.z_heavy,
+        point_spacing=args.path_spacing,
+        min_branch_length=args.min_branch,
+        smoothing_window=args.smooth_window,
+        simplify_tolerance=args.simplify,
+        max_points_per_stroke=args.max_points_per_stroke,
     )
     export_robot_json(robot_paths, args.out)
     export_debug_svg(robot_paths, args.debug_svg)
@@ -101,8 +148,14 @@ def main() -> None:
         fit_height_mm=args.fit_height,
     )
     raw_stroke_count = len(pose_strokes)
+    pruned_stroke_count = raw_stroke_count
+    if not args.no_prune_tips:
+        pose_strokes = prune_short_pose_strokes(pose_strokes, args.prune_tip_length)
+        pruned_stroke_count = len(pose_strokes)
     if not args.no_connect:
         pose_strokes = connect_nearby_pose_strokes(pose_strokes, args.connect_gap)
+    pose_strokes = trim_pose_stroke_ends(pose_strokes, args.trim_ends)
+    export_pose_strokes_json(pose_strokes, args.pose_json)
     point_count = sum(len(stroke) for stroke in pose_strokes)
     poses = [pose for stroke in pose_strokes for pose in stroke]
     for pose in poses:
@@ -121,9 +174,11 @@ def main() -> None:
         validate_pose_workspace(return_pose, config["robot_workspace"])
     print(f"Text: {text}")
     print(f"Font: {font_path}")
+    print(f"Font family: {font_family if not args.font else '(file path)'}")
     print(f"Debug SVG: {args.debug_svg}")
     print(f"Robot JSON: {args.out}")
-    print(f"Robot strokes: {len(pose_strokes)} connected from {raw_stroke_count}")
+    print(f"Robot pose JSON: {args.pose_json}")
+    print(f"Robot strokes: {len(pose_strokes)} connected from {pruned_stroke_count}, raw={raw_stroke_count}")
     print(f"Robot points: {point_count}")
     print("Paper mapping: measured corners")
     print(f"Orientation: {orientation}")
@@ -131,6 +186,13 @@ def main() -> None:
     print(f"Fit size: width={args.fit_width}mm, height={args.fit_height}mm")
     print(f"Flip Y: {args.invert_y}")
     print(f"Connect gap: {'disabled' if args.no_connect else str(args.connect_gap) + 'mm'}")
+    print(f"Prune tips: {'disabled' if args.no_prune_tips else str(args.prune_tip_length) + 'mm'}")
+    print(f"Trim ends: {args.trim_ends}mm")
+    print(
+        "Skeleton tuning: "
+        f"resolution={args.resolution}, spacing={args.path_spacing}, min_branch={args.min_branch}, "
+        f"smooth_window={args.smooth_window}, simplify={args.simplify}"
+    )
     print(f"Safe lift: {safe_z}mm")
     print(f"Velocity: write={vel}, travel={travel_vel}")
     print(f"First pose: {pose_strokes[0][0]}")
@@ -138,11 +200,11 @@ def main() -> None:
     print(f"Return pose: {return_pose if return_pose is not None else 'disabled'}")
 
     print("[3/3] Robot execution mode...")
-    if args.return_start_only:
+    if args.return_start_only or args.return_home_only:
         if return_pose is None:
-            raise RuntimeError("--return-start-only requires return pose; remove --no-return-start")
+            raise RuntimeError("Return-only mode requires return pose; remove --no-return-start")
         if not args.apply:
-            print(f"Dry-run return start only. MoveL return pose: {return_pose}")
+            print(f"Dry-run return home only. MoveL return pose: {return_pose}")
             return
 
         enable_move = bool(config.get("enable_robot_move", False))

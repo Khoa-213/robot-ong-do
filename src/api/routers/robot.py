@@ -70,18 +70,12 @@ class TextDrawRequest(BaseModel):
 
 
 class PaperCornersDrawRequest(BaseModel):
-    corners: list[list[float]] = Field(..., min_length=4, max_length=4)
+    corners: list[list[float]] | None = Field(default=None, min_length=4, max_length=4)
     vel: float | None = None
 
     class Config:
         json_schema_extra = {
             "example": {
-                "corners": [
-                    [-72.905, 566.026, 254.059, 178.105, 6.628, -117.259],
-                    [57.222, 563.859, 254.065, 178.438, 5.884, -130.427],
-                    [54.994, 376.268, 254.059, -179.927, 2.518, -137.905],
-                    [-75.305, 379.196, 254.069, 179.554, 1.428, -118.339],
-                ],
                 "vel": 20,
             }
         }
