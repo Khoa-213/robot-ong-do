@@ -2,6 +2,8 @@ from typing import Any
 import unicodedata
 from pathlib import Path
 
+import cv2
+import numpy as np
 from matplotlib.font_manager import FontProperties, findfont
 from matplotlib.textpath import TextPath
 
@@ -73,6 +75,15 @@ def build_text_pose_strokes(config: dict[str, Any], text: str) -> list[list[list
             font_family=str(demo.get("font_family", "DejaVu Sans")),
             font_path=str(demo.get("font_path", "")).strip(),
             font_size=float(demo.get("font_size", 1.0)),
+        )
+    elif mode in ("font_skeleton", "mistral", "mistral_single_line"):
+        strokes = _font_skeleton_strokes(
+            text=text,
+            font_family=str(demo.get("font_family", "Mistral")),
+            font_path=str(demo.get("font_path", "")).strip(),
+            font_size=float(demo.get("font_size", 1.0)),
+            raster_scale=int(demo.get("skeleton_raster_scale", 96)),
+            min_stroke_pixels=int(demo.get("skeleton_min_stroke_pixels", 10)),
         )
     elif mode in ("skeleton_svg", "svg_skeleton"):
         strokes = _svg_skeleton_strokes(demo, text)
@@ -172,6 +183,177 @@ def _text_polygons(text: str, font_family: str, font_path: str, font_size: float
     if not polygons:
         raise ValueError(f"No drawable contours were generated for text: {text!r}")
     return polygons
+
+
+def _font_skeleton_strokes(
+    text: str,
+    font_family: str,
+    font_path: str,
+    font_size: float,
+    raster_scale: int,
+    min_stroke_pixels: int,
+) -> list[list[Point]]:
+    polygons = _text_polygons(text, font_family, font_path, font_size)
+    points = [point for polygon in polygons for point in polygon]
+    min_x = min(point[0] for point in points)
+    max_x = max(point[0] for point in points)
+    min_y = min(point[1] for point in points)
+    max_y = max(point[1] for point in points)
+    scale = max(float(raster_scale), 24.0)
+    pad = int(scale * 0.25)
+    width = max(int((max_x - min_x) * scale) + pad * 2 + 1, 3)
+    height = max(int((max_y - min_y) * scale) + pad * 2 + 1, 3)
+
+    mask = np.zeros((height, width), dtype=np.uint8)
+    for polygon in polygons:
+        contour = np.array(
+            [
+                [
+                    int(round((x - min_x) * scale)) + pad,
+                    int(round((max_y - y) * scale)) + pad,
+                ]
+                for x, y in polygon
+            ],
+            dtype=np.int32,
+        )
+        if len(contour) >= 3:
+            cv2.fillPoly(mask, [contour], 255)
+
+    if not np.any(mask):
+        raise ValueError(f"No Mistral skeleton mask was generated for text: {text!r}")
+
+    skeleton = _zhang_suen_thinning(mask > 0)
+    pixel_strokes = _trace_skeleton_pixels(skeleton, min_stroke_pixels)
+    strokes = [
+        [
+            (
+                min_x + (float(x) - pad) / scale,
+                max_y - (float(y) - pad) / scale,
+            )
+            for x, y in stroke
+        ]
+        for stroke in pixel_strokes
+        if len(stroke) >= 2
+    ]
+    if not strokes:
+        raise ValueError(f"No Mistral single-line strokes were generated for text: {text!r}")
+    return _order_strokes_nearest(strokes)
+
+
+def _zhang_suen_thinning(binary: np.ndarray) -> np.ndarray:
+    image = binary.astype(np.uint8).copy()
+    changed = True
+    while changed:
+        changed = False
+        for step in (0, 1):
+            remove: list[tuple[int, int]] = []
+            rows, cols = image.shape
+            for y in range(1, rows - 1):
+                for x in range(1, cols - 1):
+                    if image[y, x] == 0:
+                        continue
+                    p2 = image[y - 1, x]
+                    p3 = image[y - 1, x + 1]
+                    p4 = image[y, x + 1]
+                    p5 = image[y + 1, x + 1]
+                    p6 = image[y + 1, x]
+                    p7 = image[y + 1, x - 1]
+                    p8 = image[y, x - 1]
+                    p9 = image[y - 1, x - 1]
+                    neighbors = [p2, p3, p4, p5, p6, p7, p8, p9]
+                    count = int(sum(neighbors))
+                    if count < 2 or count > 6:
+                        continue
+                    transitions = sum(1 for a, b in zip(neighbors, neighbors[1:] + neighbors[:1]) if a == 0 and b == 1)
+                    if transitions != 1:
+                        continue
+                    if step == 0:
+                        if p2 * p4 * p6 != 0 or p4 * p6 * p8 != 0:
+                            continue
+                    else:
+                        if p2 * p4 * p8 != 0 or p2 * p6 * p8 != 0:
+                            continue
+                    remove.append((y, x))
+            if remove:
+                changed = True
+                for y, x in remove:
+                    image[y, x] = 0
+    return image.astype(bool)
+
+
+def _trace_skeleton_pixels(skeleton: np.ndarray, min_stroke_pixels: int) -> list[list[tuple[int, int]]]:
+    pixels = {(int(x), int(y)) for y, x in np.argwhere(skeleton)}
+    if not pixels:
+        return []
+
+    def neighbors(point: tuple[int, int]) -> list[tuple[int, int]]:
+        x, y = point
+        found = []
+        for dy in (-1, 0, 1):
+            for dx in (-1, 0, 1):
+                if dx == 0 and dy == 0:
+                    continue
+                candidate = (x + dx, y + dy)
+                if candidate in pixels:
+                    found.append(candidate)
+        return found
+
+    degree = {point: len(neighbors(point)) for point in pixels}
+    starts = [point for point, value in degree.items() if value != 2]
+    visited_edges: set[frozenset[tuple[int, int]]] = set()
+    strokes: list[list[tuple[int, int]]] = []
+
+    def edge(a: tuple[int, int], b: tuple[int, int]) -> frozenset[tuple[int, int]]:
+        return frozenset((a, b))
+
+    def walk(start: tuple[int, int], nxt: tuple[int, int]) -> list[tuple[int, int]]:
+        path = [start, nxt]
+        visited_edges.add(edge(start, nxt))
+        prev = start
+        current = nxt
+        while degree.get(current, 0) == 2:
+            options = [item for item in neighbors(current) if item != prev and edge(current, item) not in visited_edges]
+            if not options:
+                break
+            following = options[0]
+            visited_edges.add(edge(current, following))
+            path.append(following)
+            prev, current = current, following
+        return path
+
+    for start in starts:
+        for nxt in neighbors(start):
+            if edge(start, nxt) in visited_edges:
+                continue
+            path = walk(start, nxt)
+            if len(path) >= min_stroke_pixels:
+                strokes.append(_simplify_pixel_stroke(path))
+
+    for point in pixels:
+        for nxt in neighbors(point):
+            if edge(point, nxt) in visited_edges:
+                continue
+            path = walk(point, nxt)
+            if len(path) >= min_stroke_pixels:
+                strokes.append(_simplify_pixel_stroke(path))
+
+    return strokes
+
+
+def _simplify_pixel_stroke(stroke: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    if len(stroke) <= 2:
+        return stroke
+    simplified = [stroke[0]]
+    last_dx = stroke[1][0] - stroke[0][0]
+    last_dy = stroke[1][1] - stroke[0][1]
+    for prev, point in zip(stroke[1:], stroke[2:]):
+        dx = point[0] - prev[0]
+        dy = point[1] - prev[1]
+        if (dx, dy) != (last_dx, last_dy):
+            simplified.append(prev)
+            last_dx, last_dy = dx, dy
+    simplified.append(stroke[-1])
+    return simplified
 
 
 def _font_properties(font_family: str, font_path: str) -> FontProperties:

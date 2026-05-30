@@ -25,29 +25,33 @@ def list_shapes() -> tuple[str, ...]:
 
 
 def build_shape_poses(config: dict[str, Any], shape_name: str) -> list[list[float]]:
+    return _flatten_strokes(build_shape_pose_strokes(config, shape_name))
+
+
+def build_shape_pose_strokes(config: dict[str, Any], shape_name: str) -> list[list[list[float]]]:
     shape_name = shape_name.strip().lower()
     shape_config = config.get("shape_demo", {})
 
     if shape_name == "line_horizontal":
-        return _build_line(config, [(0.25, 0.5), (0.75, 0.5)])
+        return [_build_line(config, [(0.25, 0.5), (0.75, 0.5)])]
     if shape_name == "line_vertical":
-        return _build_line(config, [(0.5, 0.25), (0.5, 0.75)])
+        return [_build_line(config, [(0.5, 0.25), (0.5, 0.75)])]
     if shape_name == "line_diagonal_down":
-        return _build_line(config, [(0.25, 0.25), (0.75, 0.75)])
+        return [_build_line(config, [(0.25, 0.25), (0.75, 0.75)])]
     if shape_name == "line_diagonal_up":
-        return _build_line(config, [(0.25, 0.75), (0.75, 0.25)])
+        return [_build_line(config, [(0.25, 0.75), (0.75, 0.25)])]
     if shape_name == "circle":
-        return _build_circle(config, shape_config)
+        return [_build_circle(config, shape_config)]
     if shape_name == "square":
-        return _build_square(config, shape_config)
+        return [_build_square(config, shape_config)]
     if shape_name == "rectangle":
-        return _build_rectangle(config, shape_config)
+        return [_build_rectangle(config, shape_config)]
     if shape_name == "triangle":
-        return _build_triangle(config, shape_config)
+        return [_build_triangle(config, shape_config)]
     if shape_name in ("tam", "tam_old"):
-        return _build_configured_tam_svg(config)
+        return [_build_configured_tam_svg(config)]
     if shape_name in ("tam1", "tam_new"):
-        return _build_svg_file(config, "assets/svg/tam1.svg")
+        return [_build_svg_file(config, "assets/svg/tam1.svg")]
 
     raise ValueError(f"Unknown shape '{shape_name}'. Available: {', '.join(SHAPE_NAMES)}")
 
@@ -122,3 +126,7 @@ def _build_configured_tam_svg(config: dict[str, Any]) -> list[list[float]]:
 def _build_svg_file(config: dict[str, Any], relative_path: str) -> list[list[float]]:
     project_root = Path(__file__).resolve().parents[1]
     return build_svg_poses(config, project_root / relative_path)
+
+
+def _flatten_strokes(strokes: list[list[list[float]]]) -> list[list[float]]:
+    return [pose for stroke in strokes for pose in stroke]

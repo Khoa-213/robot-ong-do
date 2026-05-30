@@ -162,11 +162,27 @@ def validate_measured_paper_poses(
     z_safety = config["z_safety"]
     z_min_allowed = float(paper["paper_z"]) + float(z_safety["z_min_allowed_offset"])
     expected_lift_z = float(paper["paper_z"]) + float(z_safety["z_lift_offset"])
+    pressure = config.get("calligraphy_pressure", {})
+    pressure_enabled = bool(pressure.get("enabled", False))
+    z_max_allowed = expected_lift_z
+    if pressure_enabled:
+        z_max_allowed = expected_lift_z + max(
+            float(z_safety.get("z_write_light_offset", 0.0)),
+            float(pressure.get("z_thin_offset", 0.0)),
+            0.0,
+        )
 
     for index, pose in enumerate(poses):
         validate_pose_workspace(pose, workspace)
         validate_pose_above_min_z(pose, z_min_allowed)
         validate_pose_inside_paper_corners(pose, config)
+        if pressure_enabled:
+            if float(pose[2]) > z_max_allowed + 0.001:
+                raise ValueError(
+                    f"pose[{index}] z={pose[2]} must be <= paper_z + allowed light/pressure offset "
+                    f"({round(z_max_allowed, 3)})"
+                )
+            continue
         if abs(float(pose[2]) - expected_lift_z) > 0.001:
             raise ValueError(
                 f"pose[{index}] z={pose[2]} must equal paper_z + z_lift_offset "

@@ -3,6 +3,11 @@ pandas
 matplotlib
 svgpathtools
 opencv-python
+scipy
+scikit-image
+shapely
+fonttools
+networkx
 fastapi
 uvicorn
 SpeechRecognition

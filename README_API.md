@@ -65,3 +65,5 @@ ReDoc: http://localhost:8000/redoc
 - square
 - rectangle
 - triangle
+- tam
+- tam1: ve theo file assets/svg/tam1.svg

@@ -5,7 +5,7 @@ from modules.fairino_controller import FairinoController
 from modules.fairino_raw_controller import FairinoRawXmlRpcController
 from modules.paper_zone import build_lifted_corner_pose
 from modules.safety_check import validate_measured_paper_poses, validate_pose_workspace
-from modules.shape_api import build_shape_poses
+from modules.shape_api import build_shape_pose_strokes
 
 from src.services.config_service import get_config
 
@@ -87,7 +87,8 @@ def draw_shape(shape_name: str, vel: float | None) -> dict[str, Any]:
     before_draw = config.get("before_draw", {})
     after_draw = config.get("after_draw", {})
 
-    poses = build_shape_poses(config, shape_name)
+    strokes = build_shape_pose_strokes(config, shape_name)
+    poses = [pose for stroke in strokes for pose in stroke]
     start_pose = before_draw.get("start_pose")
     return_pose = None
     return_pose_uses_paper_corner = False
@@ -118,11 +119,13 @@ def draw_shape(shape_name: str, vel: float | None) -> dict[str, Any]:
 
     try:
         controller.connect()
-        results = controller.draw_polyline_air(
-            poses=poses,
+        results = controller.draw_pose_strokes(
+            strokes=strokes,
             start_pose=start_pose,
             return_pose=return_pose,
             vel=velocity,
+            travel_vel=float(shape_config.get("travel_vel", config.get("default_vel", 10))),
+            travel_z_offset=float(config.get("text_demo", {}).get("travel_z_offset", 20.0)),
             start_vel=float(before_draw.get("start_vel", config.get("default_vel", 10))),
             return_vel=float(after_draw.get("return_vel", config.get("default_vel", 10))),
             approach_with_move_j=bool(motion_strategy.get("approach_with_move_j", False)),

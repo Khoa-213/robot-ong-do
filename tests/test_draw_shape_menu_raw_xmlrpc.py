@@ -17,18 +17,21 @@ from modules.paper_zone import (
     paper_size_from_corners,
 )
 from modules.safety_check import validate_measured_paper_poses, validate_pose_workspace
-from modules.shape_api import build_shape_poses, list_shapes
+from modules.shape_api import build_shape_pose_strokes, list_shapes
+from modules.svg_trajectory import build_custom_svg_pose_strokes
 from modules.trajectory_planner import config_from_robot_config, plan_pose_strokes
 from modules.text_trajectory import build_text_pose_strokes, connect_pose_strokes, flatten_strokes
+from src.svg.svg_to_strokes import load_svg_as_strokes, save_stroke_preview
 
 
 CONFIG_PATH = PROJECT_ROOT / "config" / "robot_config.json"
 PAPER_CORNERS_TEST = "paper_corners"
 KEYBOARD_TEXT = "keyboard_text"
+CUSTOM_SVG = "custom_svg"
 
 
 def list_menu_actions() -> tuple[str, ...]:
-    return (*list_shapes(), PAPER_CORNERS_TEST, KEYBOARD_TEXT)
+    return (*list_shapes(), PAPER_CORNERS_TEST, KEYBOARD_TEXT, CUSTOM_SVG)
 
 
 def choose_shape(default_shape: str) -> str:
@@ -36,7 +39,8 @@ def choose_shape(default_shape: str) -> str:
     print("[SHAPE_MENU] Available shapes:")
     for index, shape in enumerate(shapes, start=1):
         default_mark = " (default)" if shape == default_shape else ""
-        print(f"  {index}. {shape}{default_mark}")
+        label = "[SVG] Load and write custom SVG" if shape == CUSTOM_SVG else shape
+        print(f"  {index}. {label}{default_mark}")
 
     raw_choice = input(f"Select shape [default: {default_shape}]: ").strip()
     if not raw_choice:
@@ -62,6 +66,8 @@ def main() -> None:
         help="Shape or paper-corner test to run. If omitted, an interactive menu is shown.",
     )
     parser.add_argument("--text", help="Text to write when --shape keyboard_text is selected.")
+    parser.add_argument("--svg", help="SVG path to write when --shape custom_svg is selected.")
+    parser.add_argument("--preview", action="store_true", help="Save a stroke order preview for custom SVG.")
     parser.add_argument("--dry-run", action="store_true", help="Print/validate trajectory without sending motion.")
     parser.add_argument("--yes", action="store_true", help="Skip the final motion confirmation prompt.")
     args = parser.parse_args()
@@ -79,7 +85,10 @@ def main() -> None:
     shape_name = args.shape or choose_shape(default_shape)
     is_corner_test = shape_name == PAPER_CORNERS_TEST
     is_keyboard_text = shape_name == KEYBOARD_TEXT
+    is_custom_svg = shape_name == CUSTOM_SVG
     text_strokes = None
+    shape_strokes = None
+    custom_svg_path = None
     if is_corner_test:
         poses = build_measured_corner_test_poses(config)
     elif is_keyboard_text:
@@ -91,8 +100,24 @@ def main() -> None:
             poses = connect_pose_strokes(text_strokes)
         else:
             poses = flatten_strokes(text_strokes)
+    elif is_custom_svg:
+        raw_svg = args.svg or input("SVG file path: ").strip()
+        if not raw_svg:
+            raise ValueError("SVG file path is required for custom_svg")
+        custom_svg_path = Path(raw_svg)
+        if not custom_svg_path.is_absolute():
+            custom_svg_path = PROJECT_ROOT / custom_svg_path
+        shape_strokes = build_custom_svg_pose_strokes(config, custom_svg_path)
+        poses = flatten_strokes(shape_strokes)
+        if args.preview:
+            preview_config = dict(config.get("svg_pipeline", {}))
+            parsed_svg_strokes = load_svg_as_strokes(custom_svg_path, preview_config)
+            preview_path = PROJECT_ROOT / "outputs" / f"preview_{custom_svg_path.stem}.png"
+            save_stroke_preview(parsed_svg_strokes, preview_path, title=f"SVG stroke order: {custom_svg_path.name}")
+            print("[SHAPE_MENU] SVG preview:", preview_path)
     else:
-        poses = build_shape_poses(config, shape_name)
+        shape_strokes = build_shape_pose_strokes(config, shape_name)
+        poses = flatten_strokes(shape_strokes)
 
     start_pose = before_draw.get("start_pose")
     return_pose = None
@@ -121,6 +146,8 @@ def main() -> None:
         motion_strokes = [poses] if bool(text_config.get("continuous", True)) else text_strokes
     elif is_corner_test:
         motion_strokes = []
+    elif shape_strokes is not None:
+        motion_strokes = shape_strokes
     else:
         motion_strokes = [poses]
     planned_strokes = plan_pose_strokes(motion_strokes, planner_config) if motion_strokes else []
@@ -128,6 +155,12 @@ def main() -> None:
 
     print("[SHAPE_MENU] Config:", CONFIG_PATH)
     print("[SHAPE_MENU] Selected shape:", shape_name)
+    if is_custom_svg:
+        print("[SHAPE_MENU] SVG:", custom_svg_path)
+        xs = [pose[0] for pose in poses]
+        ys = [pose[1] for pose in poses]
+        zs = [pose[2] for pose in poses]
+        print("[SHAPE_MENU] SVG robot bbox:", [round(min(xs), 3), round(min(ys), 3), round(min(zs), 3), round(max(xs), 3), round(max(ys), 3), round(max(zs), 3)])
     if is_keyboard_text:
         print("[SHAPE_MENU] Text stroke count:", len(text_strokes or []))
         print("[SHAPE_MENU] Text continuous:", bool(text_config.get("continuous", True)))
