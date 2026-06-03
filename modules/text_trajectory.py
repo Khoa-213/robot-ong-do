@@ -7,7 +7,7 @@ import numpy as np
 from matplotlib.font_manager import FontProperties, findfont
 from matplotlib.textpath import TextPath
 
-from modules.paper_zone import build_pose_in_paper
+from modules.paper_zone import build_pose_in_paper, paper_size
 from modules.svg_trajectory import sample_svg_strokes
 
 
@@ -98,6 +98,8 @@ def build_text_pose_strokes(config: dict[str, Any], text: str) -> list[list[list
         v_min=float(demo.get("v_min", 0.2)),
         v_max=float(demo.get("v_max", 0.8)),
         invert_y=bool(demo.get("invert_y", True)),
+        paper_width_mm=paper_size(config)[0],
+        paper_height_mm=paper_size(config)[1],
     )
     max_points = int(demo.get("max_points_per_stroke", 48))
     point_spacing = float(demo.get("point_spacing", 0.04))
@@ -130,6 +132,8 @@ def fit_strokes_to_uv(
     v_min: float,
     v_max: float,
     invert_y: bool = True,
+    paper_width_mm: float = 1.0,
+    paper_height_mm: float = 1.0,
 ) -> list[list[Point]]:
     if not (0.0 <= u_min < u_max <= 1.0):
         raise ValueError("u_min/u_max must be inside [0, 1]")
@@ -151,9 +155,16 @@ def fit_strokes_to_uv(
 
     u_span = u_max - u_min
     v_span = v_max - v_min
-    scale = min(u_span / width, v_span / height)
-    fitted_width = width * scale
-    fitted_height = height * scale
+    paper_width = float(paper_width_mm)
+    paper_height = float(paper_height_mm)
+    if paper_width <= 0.0 or paper_height <= 0.0:
+        raise ValueError("paper_width_mm and paper_height_mm must be positive")
+
+    scale_mm = min((u_span * paper_width) / width, (v_span * paper_height) / height)
+    scale_x = scale_mm / paper_width
+    scale_y = scale_mm / paper_height
+    fitted_width = width * scale_x
+    fitted_height = height * scale_y
     u_offset = u_min + (u_span - fitted_width) / 2.0
     v_offset = v_min + (v_span - fitted_height) / 2.0
 
@@ -161,9 +172,9 @@ def fit_strokes_to_uv(
     for stroke in strokes:
         normalized_stroke = []
         for x, y in stroke:
-            u = u_offset + (x - min_x) * scale
+            u = u_offset + (x - min_x) * scale_x
             source_y = max_y - y if invert_y else y - min_y
-            v = v_offset + source_y * scale
+            v = v_offset + source_y * scale_y
             normalized_stroke.append((u, v))
         normalized.append(normalized_stroke)
     return normalized

@@ -2,7 +2,7 @@ from math import cos, pi, sin
 from pathlib import Path
 from typing import Any
 
-from modules.paper_zone import build_pose_in_paper
+from modules.paper_zone import build_pose_in_paper, paper_size, uv_delta_from_mm
 from modules.svg_trajectory import build_svg_poses
 
 
@@ -63,8 +63,12 @@ def _build_line(config: dict[str, Any], points_uv: list[tuple[float, float]]) ->
 def _build_circle(config: dict[str, Any], shape_config: dict[str, Any]) -> list[list[float]]:
     center_u = float(shape_config.get("center_u", 0.5))
     center_v = float(shape_config.get("center_v", 0.5))
-    radius_u = float(shape_config.get("radius_u", 0.16))
-    radius_v = float(shape_config.get("radius_v", radius_u))
+    if "radius_mm" in shape_config:
+        radius_u, radius_v = uv_delta_from_mm(config, float(shape_config["radius_mm"]), float(shape_config["radius_mm"]))
+    else:
+        width, height = paper_size(config)
+        radius_mm = float(shape_config.get("radius_u", 0.16)) * min(width, height)
+        radius_u, radius_v = uv_delta_from_mm(config, radius_mm, radius_mm)
     segments = int(shape_config.get("segments", 24))
 
     if segments < 8:
@@ -80,8 +84,12 @@ def _build_circle(config: dict[str, Any], shape_config: dict[str, Any]) -> list[
 def _build_square(config: dict[str, Any], shape_config: dict[str, Any]) -> list[list[float]]:
     center_u = float(shape_config.get("center_u", 0.5))
     center_v = float(shape_config.get("center_v", 0.5))
-    half_u = float(shape_config.get("square_half_u", 0.16))
-    half_v = float(shape_config.get("square_half_v", 0.16))
+    if "square_half_mm" in shape_config:
+        half_u, half_v = uv_delta_from_mm(config, float(shape_config["square_half_mm"]), float(shape_config["square_half_mm"]))
+    else:
+        width, height = paper_size(config)
+        half_mm = float(shape_config.get("square_half_u", 0.16)) * min(width, height)
+        half_u, half_v = uv_delta_from_mm(config, half_mm, half_mm)
     points = [
         (center_u - half_u, center_v - half_v),
         (center_u + half_u, center_v - half_v),
@@ -110,8 +118,16 @@ def _build_rectangle(config: dict[str, Any], shape_config: dict[str, Any]) -> li
 def _build_triangle(config: dict[str, Any], shape_config: dict[str, Any]) -> list[list[float]]:
     center_u = float(shape_config.get("center_u", 0.5))
     center_v = float(shape_config.get("center_v", 0.5))
-    radius_u = float(shape_config.get("triangle_radius_u", 0.18))
-    radius_v = float(shape_config.get("triangle_radius_v", 0.18))
+    if "triangle_radius_mm" in shape_config:
+        radius_u, radius_v = uv_delta_from_mm(
+            config,
+            float(shape_config["triangle_radius_mm"]),
+            float(shape_config["triangle_radius_mm"]),
+        )
+    else:
+        width, height = paper_size(config)
+        radius_mm = float(shape_config.get("triangle_radius_u", 0.18)) * min(width, height)
+        radius_u, radius_v = uv_delta_from_mm(config, radius_mm, radius_mm)
     points = []
     for angle in (-pi / 2.0, 7.0 * pi / 6.0, 11.0 * pi / 6.0, -pi / 2.0):
         points.append((center_u + radius_u * cos(angle), center_v + radius_v * sin(angle)))

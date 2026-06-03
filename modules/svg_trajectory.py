@@ -4,7 +4,7 @@ from pathlib import Path
 from math import cos, pi, sin
 from typing import Any
 
-from modules.paper_zone import build_pose_in_paper
+from modules.paper_zone import build_pose_in_paper, paper_size
 from modules.calligraphy_pressure_controller import (
     apply_calligraphy_pressure_to_strokes,
     config_from_robot_config as pressure_config_from_robot_config,
@@ -67,6 +67,8 @@ def build_custom_svg_pose_strokes(config: dict[str, Any], svg_path: Path) -> lis
         fit_height=bool(svg_config.get("fit_height", True)),
         offset_u=float(svg_config.get("offset_x", svg_config.get("offset_u", 0.0))),
         offset_v=float(svg_config.get("offset_y", svg_config.get("offset_v", 0.0))),
+        paper_width_mm=paper_size(config)[0],
+        paper_height_mm=paper_size(config)[1],
     )
     pose_strokes = [[build_pose_in_paper(config, u, v) for u, v in stroke] for stroke in uv_strokes]
     return apply_calligraphy_pressure_to_strokes(pose_strokes, pressure_config_from_robot_config(config))
@@ -142,6 +144,8 @@ def _svg_strokes_to_uv_strokes(
     fit_height: bool = True,
     offset_u: float = 0.0,
     offset_v: float = 0.0,
+    paper_width_mm: float = 1.0,
+    paper_height_mm: float = 1.0,
 ) -> list[list[Point]]:
     if bounds is None:
         all_points = [point for stroke in strokes for point in stroke["points"]]
@@ -157,18 +161,24 @@ def _svg_strokes_to_uv_strokes(
 
     u_span = u_max - u_min
     v_span = v_max - v_min
+    paper_width = float(paper_width_mm)
+    paper_height = float(paper_height_mm)
+    if paper_width <= 0.0 or paper_height <= 0.0:
+        raise ValueError("paper_width_mm and paper_height_mm must be positive")
+
     if preserve_aspect_ratio:
         scale_options = []
         if fit_width:
-            scale_options.append(u_span / width)
+            scale_options.append((u_span * paper_width) / width)
         if fit_height:
-            scale_options.append(v_span / height)
+            scale_options.append((v_span * paper_height) / height)
         if not scale_options:
             scale_options.append(1.0)
-        scale = min(scale_options)
-        scale_x = scale_y = scale
-        fitted_u = width * scale
-        fitted_v = height * scale
+        scale_mm = min(scale_options)
+        scale_x = scale_mm / paper_width
+        scale_y = scale_mm / paper_height
+        fitted_u = width * scale_x
+        fitted_v = height * scale_y
     else:
         scale_x = u_span / width
         scale_y = v_span / height
@@ -258,6 +268,8 @@ def fit_points_to_uv(
     u_max: float,
     v_min: float,
     v_max: float,
+    paper_width_mm: float = 1.0,
+    paper_height_mm: float = 1.0,
 ) -> list[Point]:
     if not (0.0 <= u_min < u_max <= 1.0):
         raise ValueError("u_min/u_max must be inside [0, 1]")
@@ -275,16 +287,23 @@ def fit_points_to_uv(
 
     u_span = u_max - u_min
     v_span = v_max - v_min
-    scale = min(u_span / width, v_span / height)
-    fitted_width = width * scale
-    fitted_height = height * scale
+    paper_width = float(paper_width_mm)
+    paper_height = float(paper_height_mm)
+    if paper_width <= 0.0 or paper_height <= 0.0:
+        raise ValueError("paper_width_mm and paper_height_mm must be positive")
+
+    scale_mm = min((u_span * paper_width) / width, (v_span * paper_height) / height)
+    scale_x = scale_mm / paper_width
+    scale_y = scale_mm / paper_height
+    fitted_width = width * scale_x
+    fitted_height = height * scale_y
     u_offset = u_min + (u_span - fitted_width) / 2.0
     v_offset = v_min + (v_span - fitted_height) / 2.0
 
     return [
         (
-            u_offset + (x - min_x) * scale,
-            v_offset + (y - min_y) * scale,
+            u_offset + (x - min_x) * scale_x,
+            v_offset + (y - min_y) * scale_y,
         )
         for x, y in points
     ]

@@ -41,6 +41,8 @@ ReDoc: http://localhost:8000/redoc
   - Cong dung: viet/ve theo file SVG, word_key trong config/word_library.json, hoac danh sach svg_paths; bi khoa boi enable_robot_move va allow_raw_xmlrpc_motion.
 - POST /robot/draw/text
   - Cong dung: viet chu theo cau hinh text_demo hien tai; bi khoa boi enable_robot_move va allow_raw_xmlrpc_motion.
+- POST /robot/draw/text/outline
+  - Cong dung: viet chu nhap tu ban phim theo outline font Times New Roman; bi khoa boi enable_robot_move va allow_raw_xmlrpc_motion.
 - POST /robot/draw/paper_corners
   - Cong dung: cho robot di qua 4 goc hien tai trong `config.paper.corners` de kiem tra; bi khoa boi enable_robot_move va allow_raw_xmlrpc_motion.
 
@@ -93,6 +95,15 @@ Cac API move/ve/viet co field `vel` se dung gia tri nay lam toc do robot cho ca 
 }
 ```
 
+- POST /robot/draw/text/outline
+```json
+{
+  "text": "Happy New Year",
+  "continuous": false,
+  "vel": 12
+}
+```
+
 ## Trajectory (Preview)
 - POST /trajectory/line/preview
   - Cong dung: tao danh sach pose cho line demo.
@@ -102,6 +113,8 @@ Cac API move/ve/viet co field `vel` se dung gia tri nay lam toc do robot cho ca 
   - Cong dung: tao danh sach pose tu SVG.
 - POST /trajectory/text/preview
   - Cong dung: tao danh sach pose tu text.
+- POST /trajectory/text/outline/preview
+  - Cong dung: tao danh sach pose preview cho chu outline Times New Roman.
 
 ## Safety
 - POST /safety/validate_pose

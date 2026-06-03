@@ -7,6 +7,7 @@ from src.services.trajectory_service import (
     build_line_preview,
     build_shape_preview,
     build_svg_preview,
+    build_text_outline_times_preview,
     build_text_preview,
 )
 
@@ -34,6 +35,14 @@ class TextRequest(BaseModel):
 
     class Config:
         json_schema_extra = {"example": {"text": "Tam", "continuous": True}}
+
+
+class TextOutlineRequest(BaseModel):
+    text: str
+    continuous: bool | None = None
+
+    class Config:
+        json_schema_extra = {"example": {"text": "Happy New Year", "continuous": False}}
 
 
 @router.post(
@@ -118,3 +127,11 @@ def preview_svg(payload: SvgRequest) -> dict[str, Any]:
 )
 def preview_text(payload: TextRequest) -> dict[str, Any]:
     return build_text_preview(payload.text, payload.continuous)
+
+
+@router.post(
+    "/text/outline/preview",
+    summary="Preview keyboard text as Times New Roman outline poses",
+)
+def preview_text_outline(payload: TextOutlineRequest) -> dict[str, Any]:
+    return build_text_outline_times_preview(payload.text, payload.continuous)

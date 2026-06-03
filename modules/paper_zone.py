@@ -30,6 +30,17 @@ def paper_size_from_corners(corners: dict[str, list[float]]) -> tuple[float, flo
     return (top_width + bottom_width) / 2.0, (left_height + right_height) / 2.0
 
 
+def paper_size(config: dict[str, Any]) -> tuple[float, float]:
+    return paper_size_from_corners(get_paper_corners(config))
+
+
+def uv_delta_from_mm(config: dict[str, Any], dx_mm: float, dy_mm: float) -> tuple[float, float]:
+    width, height = paper_size(config)
+    if width <= 0.0 or height <= 0.0:
+        raise ValueError("Paper width/height from corners must be positive")
+    return float(dx_mm) / width, float(dy_mm) / height
+
+
 def normalized_margin(config: dict[str, Any]) -> tuple[float, float]:
     corners = get_paper_corners(config)
     width, height = paper_size_from_corners(corners)
@@ -86,8 +97,12 @@ def build_circle_demo_poses(config: dict[str, Any]) -> list[list[float]]:
     demo = config["circle_demo"]
     center_u = float(demo.get("center_u", 0.5))
     center_v = float(demo.get("center_v", 0.5))
-    radius_u = float(demo.get("radius_u", 0.15))
-    radius_v = float(demo.get("radius_v", radius_u))
+    if "radius_mm" in demo:
+        radius_u, radius_v = uv_delta_from_mm(config, float(demo["radius_mm"]), float(demo["radius_mm"]))
+    else:
+        width, height = paper_size(config)
+        radius_mm = float(demo.get("radius_u", 0.15)) * min(width, height)
+        radius_u, radius_v = uv_delta_from_mm(config, radius_mm, radius_mm)
     segments = int(demo.get("segments", 24))
 
     if segments < 8:

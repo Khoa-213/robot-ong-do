@@ -11,6 +11,7 @@ from modules.svg_trajectory import build_svg_poses
 from modules.text_trajectory import build_text_pose_strokes, connect_pose_strokes, flatten_strokes
 
 from src.services.config_service import get_config
+from src.services.robot_service import _times_outline_text_config
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -63,6 +64,24 @@ def build_text_preview(text: str, continuous: bool | None) -> dict[str, Any]:
     return {
         "text": text,
         "continuous": continuous_mode,
+        "stroke_count": len(strokes),
+        "poses": poses,
+    }
+
+
+def build_text_outline_times_preview(text: str, continuous: bool | None) -> dict[str, Any]:
+    config = _times_outline_text_config(get_config())
+    strokes = build_text_pose_strokes(config, text)
+    continuous_mode = continuous
+    if continuous_mode is None:
+        continuous_mode = bool(config.get("text_demo", {}).get("continuous", False))
+
+    poses = connect_pose_strokes(strokes) if continuous_mode else flatten_strokes(strokes)
+    return {
+        "text": text,
+        "continuous": continuous_mode,
+        "font_family": "Times New Roman",
+        "text_mode": "outline",
         "stroke_count": len(strokes),
         "poses": poses,
     }

@@ -7,6 +7,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from modules.text_trajectory import _font_properties, _font_skeleton_strokes, _text_polygons
+from src.services.trajectory_service import build_text_outline_times_preview
 
 
 def test_outline_text_falls_back_when_configured_font_path_is_missing() -> None:
@@ -25,7 +26,16 @@ def test_font_skeleton_generates_centerline_strokes() -> None:
     assert all(len(stroke) >= 2 for stroke in strokes)
 
 
+def test_times_outline_preview_generates_poses() -> None:
+    preview = build_text_outline_times_preview("Test", continuous=False)
+    assert preview["font_family"] == "Times New Roman"
+    assert preview["text_mode"] == "outline"
+    assert preview["stroke_count"] > 0
+    assert preview["poses"]
+
+
 if __name__ == "__main__":
     test_outline_text_falls_back_when_configured_font_path_is_missing()
     test_font_skeleton_generates_centerline_strokes()
+    test_times_outline_preview_generates_poses()
     print("[TEXT_TRAJECTORY] Font fallback and skeleton OK")

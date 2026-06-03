@@ -13,6 +13,7 @@ from modules.paper_zone import (
     build_pose_in_paper,
     get_paper_corners,
     paper_size_from_corners,
+    paper_size,
     validate_pose_inside_paper_corners,
 )
 from modules.safety_check import validate_measured_paper_poses, validate_pose_workspace
@@ -171,6 +172,25 @@ def draw_text(text: str, vel: float | None, continuous: bool | None) -> dict[str
         source=text,
     )
     result["continuous"] = continuous_mode
+    return result
+
+
+def draw_text_outline_times(text: str, vel: float | None, continuous: bool | None) -> dict[str, Any]:
+    config = _times_outline_text_config(get_config())
+    text_config = config.get("text_demo", {})
+    raw_strokes = build_text_pose_strokes(config, text)
+    continuous_mode = continuous if continuous is not None else bool(text_config.get("continuous", False))
+    strokes = [[pose for stroke in raw_strokes for pose in stroke]] if continuous_mode else raw_strokes
+    result = _draw_pose_strokes(
+        config,
+        strokes,
+        vel,
+        default_vel=float(text_config.get("vel", config.get("default_vel", 10))),
+        source=text,
+    )
+    result["continuous"] = continuous_mode
+    result["font_family"] = str(text_config.get("font_family", "Times New Roman"))
+    result["text_mode"] = "outline"
     return result
 
 
@@ -386,6 +406,22 @@ def _effective_vel(request_vel: float | None, fallback: Any) -> float:
     return value
 
 
+def _times_outline_text_config(config: dict[str, Any]) -> dict[str, Any]:
+    text_demo = dict(config.get("text_demo", {}))
+    text_demo.update(
+        {
+            "mode": "outline",
+            "continuous": False,
+            "font_family": "Times New Roman",
+            "font_path": str(text_demo.get("times_font_path", "C:/Windows/Fonts/times.ttf")),
+            "font_size": float(text_demo.get("outline_font_size", text_demo.get("font_size", 1.0))),
+            "max_points_per_stroke": int(text_demo.get("outline_max_points_per_stroke", 180)),
+            "point_spacing": float(text_demo.get("outline_point_spacing", text_demo.get("point_spacing", 0.025))),
+        }
+    )
+    return {**config, "text_demo": text_demo}
+
+
 def _configured_return_pose(config: dict[str, Any]) -> tuple[list[float] | None, bool]:
     after_draw = config.get("after_draw", {})
     if after_draw.get("return_pose") is not None:
@@ -594,6 +630,8 @@ def _build_combined_svg_pose_strokes(config: dict[str, Any], svg_paths: list[Pat
         u_max=float(demo.get("u_max", 0.75)),
         v_min=float(demo.get("v_min", 0.25)),
         v_max=float(demo.get("v_max", 0.75)),
+        paper_width_mm=paper_size(config)[0],
+        paper_height_mm=paper_size(config)[1],
     )
 
     pose_strokes = []

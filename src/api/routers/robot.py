@@ -11,6 +11,7 @@ from src.services.robot_service import (
     draw_shape,
     draw_svg,
     draw_text,
+    draw_text_outline_times,
     get_raw_robot_status,
     get_robot_status,
     move_l,
@@ -67,6 +68,15 @@ class TextDrawRequest(BaseModel):
 
     class Config:
         json_schema_extra = {"example": {"text": "Tam", "continuous": False, "vel": 12}}
+
+
+class TextOutlineDrawRequest(BaseModel):
+    text: str
+    continuous: bool | None = None
+    vel: float | None = None
+
+    class Config:
+        json_schema_extra = {"example": {"text": "Happy New Year", "continuous": False, "vel": 12}}
 
 
 class PaperCornersDrawRequest(BaseModel):
@@ -286,6 +296,14 @@ def robot_draw_svg(payload: SvgDrawRequest) -> dict[str, Any]:
 )
 def robot_draw_text(payload: TextDrawRequest) -> dict[str, Any]:
     return draw_text(payload.text, payload.vel, payload.continuous)
+
+
+@router.post(
+    "/draw/text/outline",
+    summary="Draw keyboard text as Times New Roman outline strokes (guarded by config)",
+)
+def robot_draw_text_outline(payload: TextOutlineDrawRequest) -> dict[str, Any]:
+    return draw_text_outline_times(payload.text, payload.vel, payload.continuous)
 
 
 @router.post(
