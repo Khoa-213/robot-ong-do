@@ -31,7 +31,11 @@ def repair_geometry(geometry) -> MultiPolygon:
     elif isinstance(repaired, MultiPolygon):
         polygons = list(repaired.geoms)
     elif hasattr(repaired, "geoms"):
-        polygons = [item for item in repaired.geoms if isinstance(item, Polygon)]
+        for item in repaired.geoms:
+            if isinstance(item, Polygon):
+                polygons.append(item)
+            elif isinstance(item, MultiPolygon):
+                polygons.extend(item.geoms)
 
     polygons = [poly for poly in polygons if poly.area > 1e-9]
     if not polygons:

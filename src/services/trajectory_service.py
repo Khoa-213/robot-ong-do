@@ -12,6 +12,13 @@ from modules.text_trajectory import build_text_pose_strokes, connect_pose_stroke
 
 from src.services.config_service import get_config
 from src.services.robot_service import _times_outline_text_config
+from src.outline_to_skeleton import text_to_robot_paths
+from src.robot.fairino_path_adapter import (
+    robot_paths_to_measured_paper_poses,
+    prune_short_pose_strokes,
+    connect_nearby_pose_strokes,
+    trim_pose_stroke_ends,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -83,6 +90,64 @@ def build_text_outline_times_preview(text: str, continuous: bool | None) -> dict
         "font_family": "Times New Roman",
         "text_mode": "outline",
         "stroke_count": len(strokes),
+        "poses": poses,
+    }
+
+
+def build_text_skeleton_times_preview(text: str, continuous: bool | None) -> dict[str, Any]:
+    config = get_config()
+    text_demo = config.get("text_demo", {})
+    paper = config.get("paper", {})
+
+    font_path = str(text_demo.get("times_font_path", "C:/Windows/Fonts/times.ttf"))
+    if not Path(font_path).is_file():
+        font_path = "C:/Windows/Fonts/times.ttf"
+
+    # Extract skeleton centerline (x, y, z)
+    robot_paths = text_to_robot_paths(
+        text=text,
+        font_path=font_path,
+        font_size=200,
+        resolution=2.0,
+        z_light=-0.5,
+        z_heavy=-3.0,
+        point_spacing=1.0,
+        min_branch_length=4.0,
+        simplify_tolerance=0.05,
+        theta=1.5,
+    )
+
+    orientation = paper.get("draw_orientation", [0.0, 0.0, 0.0])
+    pose_strokes = robot_paths_to_measured_paper_poses(
+        robot_paths=robot_paths,
+        paper_config=paper,
+        margin_mm=paper.get("margin_mm", 20.0),
+        orientation=orientation,
+        invert_y=True,
+        fit_width_mm=90.0,
+        fit_height_mm=80.0,
+    )
+
+    prune_tip_length = 28.0
+    connect_gap = 8.0
+    trim_ends = 3.0
+
+    pose_strokes = prune_short_pose_strokes(pose_strokes, prune_tip_length)
+    continuous_mode = bool(continuous)
+    if not continuous_mode:
+        pose_strokes = connect_nearby_pose_strokes(pose_strokes, connect_gap)
+    else:
+        pose_strokes = connect_nearby_pose_strokes(pose_strokes, 9999.0)
+
+    pose_strokes = trim_pose_stroke_ends(pose_strokes, trim_ends)
+    poses = [pose for stroke in pose_strokes for pose in stroke]
+
+    return {
+        "text": text,
+        "continuous": continuous_mode,
+        "font_family": "Times New Roman",
+        "text_mode": "skeleton",
+        "stroke_count": len(pose_strokes),
         "poses": poses,
     }
 

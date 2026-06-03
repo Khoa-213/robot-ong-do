@@ -12,6 +12,7 @@ from src.services.robot_service import (
     draw_svg,
     draw_text,
     draw_text_outline_times,
+    draw_text_skeleton_times,
     get_raw_robot_status,
     get_robot_status,
     move_l,
@@ -71,6 +72,15 @@ class TextDrawRequest(BaseModel):
 
 
 class TextOutlineDrawRequest(BaseModel):
+    text: str
+    continuous: bool | None = None
+    vel: float | None = None
+
+    class Config:
+        json_schema_extra = {"example": {"text": "Happy New Year", "continuous": False, "vel": 12}}
+
+
+class TextSkeletonDrawRequest(BaseModel):
     text: str
     continuous: bool | None = None
     vel: float | None = None
@@ -304,6 +314,14 @@ def robot_draw_text(payload: TextDrawRequest) -> dict[str, Any]:
 )
 def robot_draw_text_outline(payload: TextOutlineDrawRequest) -> dict[str, Any]:
     return draw_text_outline_times(payload.text, payload.vel, payload.continuous)
+
+
+@router.post(
+    "/draw/text/skeleton",
+    summary="Draw keyboard text as Times New Roman skeleton strokes (guarded by config)",
+)
+def robot_draw_text_skeleton(payload: TextSkeletonDrawRequest) -> dict[str, Any]:
+    return draw_text_skeleton_times(payload.text, payload.vel, payload.continuous)
 
 
 @router.post(

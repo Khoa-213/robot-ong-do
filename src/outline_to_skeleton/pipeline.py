@@ -19,6 +19,7 @@ def text_to_robot_paths(
     smoothing_window: int = 3,
     simplify_tolerance: float = 0.05,
     max_points_per_stroke: int = 600,
+    theta: float = 1.5,
 ) -> list[list[tuple[float, float, float]]]:
     """
     Convert text outline into centerline robot paths with Z-depth.
@@ -36,6 +37,7 @@ def text_to_robot_paths(
         smoothing_window=smoothing_window,
         simplify_tolerance=simplify_tolerance,
         max_points_per_stroke=max_points_per_stroke,
+        theta=theta,
     )
 
 
@@ -51,6 +53,7 @@ def svg_outline_to_robot_paths(
     smoothing_window: int = 3,
     simplify_tolerance: float = 0.05,
     max_points_per_stroke: int = 600,
+    theta: float = 1.5,
 ) -> list[list[tuple[float, float, float]]]:
     """
     Convert SVG outline into centerline robot paths with Z-depth.
@@ -68,4 +71,5 @@ def svg_outline_to_robot_paths(
         smoothing_window=smoothing_window,
         simplify_tolerance=simplify_tolerance,
         max_points_per_stroke=max_points_per_stroke,
+        theta=theta,
     )

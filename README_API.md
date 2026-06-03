@@ -43,6 +43,8 @@ ReDoc: http://localhost:8000/redoc
   - Cong dung: viet chu theo cau hinh text_demo hien tai; bi khoa boi enable_robot_move va allow_raw_xmlrpc_motion.
 - POST /robot/draw/text/outline
   - Cong dung: viet chu nhap tu ban phim theo outline font Times New Roman; bi khoa boi enable_robot_move va allow_raw_xmlrpc_motion.
+- POST /robot/draw/text/skeleton
+  - Cong dung: viet chu nhap tu ban phim theo skeleton (centerline) font Times New Roman; bi khoa boi enable_robot_move va allow_raw_xmlrpc_motion.
 - POST /robot/draw/paper_corners
   - Cong dung: cho robot di qua 4 goc hien tai trong `config.paper.corners` de kiem tra; bi khoa boi enable_robot_move va allow_raw_xmlrpc_motion.
 
@@ -104,6 +106,15 @@ Cac API move/ve/viet co field `vel` se dung gia tri nay lam toc do robot cho ca 
 }
 ```
 
+- POST /robot/draw/text/skeleton
+```json
+{
+  "text": "Nhẫn",
+  "continuous": false,
+  "vel": 12
+}
+```
+
 ## Trajectory (Preview)
 - POST /trajectory/line/preview
   - Cong dung: tao danh sach pose cho line demo.
@@ -115,6 +126,8 @@ Cac API move/ve/viet co field `vel` se dung gia tri nay lam toc do robot cho ca 
   - Cong dung: tao danh sach pose tu text.
 - POST /trajectory/text/outline/preview
   - Cong dung: tao danh sach pose preview cho chu outline Times New Roman.
+- POST /trajectory/text/skeleton/preview
+  - Cong dung: tao danh sach pose preview cho chu skeleton (centerline) Times New Roman.
 
 ## Safety
 - POST /safety/validate_pose

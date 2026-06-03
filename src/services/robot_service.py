@@ -23,6 +23,13 @@ from modules.text_trajectory import build_text_pose_strokes
 from modules.trajectory_planner import config_from_robot_config, plan_pose_strokes
 
 from src.services.config_service import get_config
+from src.outline_to_skeleton import text_to_robot_paths
+from src.robot.fairino_path_adapter import (
+    robot_paths_to_measured_paper_poses,
+    prune_short_pose_strokes,
+    connect_nearby_pose_strokes,
+    trim_pose_stroke_ends,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -191,6 +198,65 @@ def draw_text_outline_times(text: str, vel: float | None, continuous: bool | Non
     result["continuous"] = continuous_mode
     result["font_family"] = str(text_config.get("font_family", "Times New Roman"))
     result["text_mode"] = "outline"
+    return result
+
+
+def draw_text_skeleton_times(text: str, vel: float | None, continuous: bool | None) -> dict[str, Any]:
+    config = get_config()
+    text_demo = config.get("text_demo", {})
+    paper = config.get("paper", {})
+
+    font_path = str(text_demo.get("times_font_path", "C:/Windows/Fonts/times.ttf"))
+    if not Path(font_path).is_file():
+        font_path = "C:/Windows/Fonts/times.ttf"
+
+    robot_paths = text_to_robot_paths(
+        text=text,
+        font_path=font_path,
+        font_size=200,
+        resolution=2.0,
+        z_light=-0.5,
+        z_heavy=-3.0,
+        point_spacing=1.0,
+        min_branch_length=4.0,
+        simplify_tolerance=0.05,
+        theta=1.5,
+    )
+
+    orientation = paper.get("draw_orientation", [0.0, 0.0, 0.0])
+    pose_strokes = robot_paths_to_measured_paper_poses(
+        robot_paths=robot_paths,
+        paper_config=paper,
+        margin_mm=paper.get("margin_mm", 20.0),
+        orientation=orientation,
+        invert_y=True,
+        fit_width_mm=90.0,
+        fit_height_mm=80.0,
+    )
+
+    prune_tip_length = 28.0
+    connect_gap = 8.0
+    trim_ends = 3.0
+
+    pose_strokes = prune_short_pose_strokes(pose_strokes, prune_tip_length)
+    continuous_mode = continuous if continuous is not None else bool(text_demo.get("continuous", False))
+    if not continuous_mode:
+        pose_strokes = connect_nearby_pose_strokes(pose_strokes, connect_gap)
+    else:
+        pose_strokes = connect_nearby_pose_strokes(pose_strokes, 9999.0)
+
+    pose_strokes = trim_pose_stroke_ends(pose_strokes, trim_ends)
+
+    result = _draw_pose_strokes(
+        config,
+        pose_strokes,
+        vel,
+        default_vel=float(text_demo.get("vel", config.get("default_vel", 10))),
+        source=text,
+    )
+    result["continuous"] = continuous_mode
+    result["font_family"] = "Times New Roman"
+    result["text_mode"] = "skeleton"
     return result
 
 

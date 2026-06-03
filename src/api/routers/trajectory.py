@@ -9,6 +9,7 @@ from src.services.trajectory_service import (
     build_svg_preview,
     build_text_outline_times_preview,
     build_text_preview,
+    build_text_skeleton_times_preview,
 )
 
 router = APIRouter()
@@ -135,3 +136,11 @@ def preview_text(payload: TextRequest) -> dict[str, Any]:
 )
 def preview_text_outline(payload: TextOutlineRequest) -> dict[str, Any]:
     return build_text_outline_times_preview(payload.text, payload.continuous)
+
+
+@router.post(
+    "/text/skeleton/preview",
+    summary="Preview keyboard text as Times New Roman skeleton poses",
+)
+def preview_text_skeleton(payload: TextOutlineRequest) -> dict[str, Any]:
+    return build_text_skeleton_times_preview(payload.text, payload.continuous)

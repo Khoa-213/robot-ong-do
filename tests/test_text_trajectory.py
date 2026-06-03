@@ -34,8 +34,18 @@ def test_times_outline_preview_generates_poses() -> None:
     assert preview["poses"]
 
 
+def test_times_skeleton_preview_generates_poses() -> None:
+    from src.services.trajectory_service import build_text_skeleton_times_preview
+    preview = build_text_skeleton_times_preview("Test", continuous=False)
+    assert preview["font_family"] == "Times New Roman"
+    assert preview["text_mode"] == "skeleton"
+    assert preview["stroke_count"] > 0
+    assert preview["poses"]
+
+
 if __name__ == "__main__":
     test_outline_text_falls_back_when_configured_font_path_is_missing()
     test_font_skeleton_generates_centerline_strokes()
     test_times_outline_preview_generates_poses()
-    print("[TEXT_TRAJECTORY] Font fallback and skeleton OK")
+    test_times_skeleton_preview_generates_poses()
+    print("[TEXT_TRAJECTORY] Font fallback, skeleton, and times_skeleton OK")
