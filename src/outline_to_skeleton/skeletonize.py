@@ -219,13 +219,18 @@ def polygons_to_robot_paths(
 
     strokes: list[list[tuple[float, float, float]]] = []
     for voronoi_stroke in voronoi_strokes:
+        # Simplify the raw Voronoi centerline first to reduce point density and noise
+        simplified_stroke = rdp_stroke(voronoi_stroke, simplify_tolerance)
+        if len(simplified_stroke) < 2:
+            continue
+
         raw: list[tuple[float, float, float]] = []
         z_values = [
             map_radius_to_z(r, min_radius, max_radius, z_light, z_heavy)
-            for x, y, r in voronoi_stroke
+            for x, y, r in simplified_stroke
         ]
         z_values = smooth_z_values(z_values)
-        for (x, y, r), z in zip(voronoi_stroke, z_values):
+        for (x, y, r), z in zip(simplified_stroke, z_values):
             raw.append((x * output_scale, y * output_scale, z))
         if len(raw) < 2:
             continue
