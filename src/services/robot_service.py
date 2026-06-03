@@ -117,7 +117,7 @@ def move_to_start(vel: float | None) -> dict[str, Any]:
         raise ValueError("before_draw.start_pose is not configured")
 
     validate_pose_workspace(start_pose, config["robot_workspace"])
-    velocity = float(vel) if vel is not None else float(before_draw.get("start_vel", config.get("default_vel", 10)))
+    velocity = _effective_vel(vel, before_draw.get("start_vel", config.get("default_vel", 10)))
     result = _raw_move_l(config, start_pose, velocity)
     return {"pose": start_pose, **result}
 
@@ -187,7 +187,7 @@ def move_l(pose: list[float], vel: float | None) -> dict[str, Any]:
     )
 
     enable_move = bool(config.get("enable_robot_move", False))
-    velocity = float(vel) if vel is not None else float(config.get("default_vel", 10))
+    velocity = _effective_vel(vel, config.get("default_vel", 10))
 
     try:
         controller.connect()
@@ -219,7 +219,11 @@ def draw_shape(shape_name: str, vel: float | None) -> dict[str, Any]:
 
     enable_move = bool(config.get("enable_robot_move", False))
     allow_raw_motion = bool(policy.get("allow_raw_xmlrpc_motion", False))
-    velocity = float(vel) if vel is not None else float(shape_config.get("vel", config.get("default_vel", 10)))
+    velocity = _effective_vel(vel, shape_config.get("vel", config.get("default_vel", 10)))
+    travel_velocity = _effective_vel(vel, shape_config.get("travel_vel", config.get("default_vel", 10)))
+    start_velocity = _effective_vel(vel, before_draw.get("start_vel", config.get("default_vel", 10)))
+    return_velocity = _effective_vel(vel, after_draw.get("return_vel", config.get("default_vel", 10)))
+    approach_velocity = _effective_vel(vel, motion_strategy.get("approach_vel", config.get("default_vel", 10)))
 
     validate_measured_paper_poses(poses, config)
     if start_pose is not None:
@@ -244,12 +248,12 @@ def draw_shape(shape_name: str, vel: float | None) -> dict[str, Any]:
             start_pose=start_pose,
             return_pose=return_pose,
             vel=velocity,
-            travel_vel=float(shape_config.get("travel_vel", config.get("default_vel", 10))),
+            travel_vel=travel_velocity,
             travel_z_offset=float(config.get("text_demo", {}).get("travel_z_offset", 20.0)),
-            start_vel=float(before_draw.get("start_vel", config.get("default_vel", 10))),
-            return_vel=float(after_draw.get("return_vel", config.get("default_vel", 10))),
+            start_vel=start_velocity,
+            return_vel=return_velocity,
             approach_with_move_j=bool(motion_strategy.get("approach_with_move_j", False)),
-            approach_vel=float(motion_strategy.get("approach_vel", config.get("default_vel", 10))),
+            approach_vel=approach_velocity,
             enable_move=enable_move,
             allow_raw_xmlrpc_motion=allow_raw_motion,
         )
@@ -259,6 +263,11 @@ def draw_shape(shape_name: str, vel: float | None) -> dict[str, Any]:
     return {
         "shape": shape_name,
         "pose_count": len(poses),
+        "vel": velocity,
+        "travel_vel": travel_velocity,
+        "start_vel": start_velocity,
+        "return_vel": return_velocity,
+        "approach_vel": approach_velocity,
         "enable_move": enable_move,
         "allow_raw_xmlrpc_motion": allow_raw_motion,
         "result": results,
@@ -290,7 +299,9 @@ def draw_paper_corners(corners: list[list[float]] | None, vel: float | None) -> 
 
     enable_move = bool(config.get("enable_robot_move", False))
     allow_raw_motion = bool(policy.get("allow_raw_xmlrpc_motion", False))
-    velocity = float(vel) if vel is not None else float(config.get("default_vel", 10))
+    velocity = _effective_vel(vel, config.get("default_vel", 10))
+    start_velocity = _effective_vel(vel, config.get("before_draw", {}).get("start_vel", config.get("default_vel", 10)))
+    approach_velocity = _effective_vel(vel, motion_strategy.get("approach_vel", config.get("default_vel", 10)))
 
     controller = FairinoRawXmlRpcController(
         robot_ip=str(config["robot_ip"]),
@@ -305,9 +316,9 @@ def draw_paper_corners(corners: list[list[float]] | None, vel: float | None) -> 
             poses=poses,
             start_pose=config.get("before_draw", {}).get("start_pose"),
             vel=velocity,
-            start_vel=float(config.get("before_draw", {}).get("start_vel", config.get("default_vel", 10))),
+            start_vel=start_velocity,
             approach_with_move_j=bool(motion_strategy.get("approach_with_move_j", False)),
-            approach_vel=float(motion_strategy.get("approach_vel", config.get("default_vel", 10))),
+            approach_vel=approach_velocity,
             enable_move=enable_move,
             allow_raw_xmlrpc_motion=allow_raw_motion,
         )
@@ -318,6 +329,9 @@ def draw_paper_corners(corners: list[list[float]] | None, vel: float | None) -> 
         "source": source,
         "corner_order": list(CORNER_KEYS),
         "pose_count": len(poses),
+        "vel": velocity,
+        "start_vel": start_velocity,
+        "approach_vel": approach_velocity,
         "enable_move": enable_move,
         "allow_raw_xmlrpc_motion": allow_raw_motion,
         "result": results,
@@ -365,6 +379,13 @@ def _raw_move_l(config: dict[str, Any], pose: list[float], vel: float) -> dict[s
     return {"enable_move": enable_move, "allow_raw_xmlrpc_motion": allow_raw_motion, "result": result}
 
 
+def _effective_vel(request_vel: float | None, fallback: Any) -> float:
+    value = float(request_vel) if request_vel is not None else float(fallback)
+    if value <= 0:
+        raise ValueError("vel must be greater than 0")
+    return value
+
+
 def _configured_return_pose(config: dict[str, Any]) -> tuple[list[float] | None, bool]:
     after_draw = config.get("after_draw", {})
     if after_draw.get("return_pose") is not None:
@@ -396,7 +417,10 @@ def _draw_polyline(config: dict[str, Any], poses: list[list[float]], vel: float 
     _validate_return_pose(config, return_pose, return_pose_uses_paper_corner)
 
     enable_move, allow_raw_motion = _motion_flags(config)
-    velocity = float(vel) if vel is not None else default_vel
+    velocity = _effective_vel(vel, default_vel)
+    start_velocity = _effective_vel(vel, before_draw.get("start_vel", config.get("default_vel", 10)))
+    return_velocity = _effective_vel(vel, after_draw.get("return_vel", config.get("default_vel", 10)))
+    approach_velocity = _effective_vel(vel, motion_strategy.get("approach_vel", config.get("default_vel", 10)))
     controller = _raw_controller(config)
     _configure_paper_guard(controller, config)
     try:
@@ -406,10 +430,10 @@ def _draw_polyline(config: dict[str, Any], poses: list[list[float]], vel: float 
             start_pose=start_pose,
             return_pose=return_pose,
             vel=velocity,
-            start_vel=float(before_draw.get("start_vel", config.get("default_vel", 10))),
-            return_vel=float(after_draw.get("return_vel", config.get("default_vel", 10))),
+            start_vel=start_velocity,
+            return_vel=return_velocity,
             approach_with_move_j=bool(motion_strategy.get("approach_with_move_j", False)),
-            approach_vel=float(motion_strategy.get("approach_vel", config.get("default_vel", 10))),
+            approach_vel=approach_velocity,
             enable_move=enable_move,
             allow_raw_xmlrpc_motion=allow_raw_motion,
             blend_radius=float(motion_strategy.get("blend_radius", -1.0)),
@@ -421,6 +445,10 @@ def _draw_polyline(config: dict[str, Any], poses: list[list[float]], vel: float 
         "pose_count": len(poses),
         "start_pose": start_pose,
         "return_pose": return_pose,
+        "vel": velocity,
+        "start_vel": start_velocity,
+        "return_vel": return_velocity,
+        "approach_vel": approach_velocity,
         "enable_move": enable_move,
         "allow_raw_xmlrpc_motion": allow_raw_motion,
         "result": results,
@@ -455,8 +483,14 @@ def _draw_pose_strokes(
     motion_strokes = planned_strokes if use_smooth else strokes
 
     enable_move, allow_raw_motion = _motion_flags(config)
-    writing_vel = float(vel) if vel is not None else float(smooth_config.get("writing_speed_mm_s", default_vel))
-    travel_vel = float(smooth_config.get("travel_speed_mm_s", text_config.get("travel_vel", config.get("default_vel", 10))))
+    writing_vel = _effective_vel(vel, smooth_config.get("writing_speed_mm_s", default_vel))
+    travel_vel = _effective_vel(
+        vel,
+        smooth_config.get("travel_speed_mm_s", text_config.get("travel_vel", config.get("default_vel", 10))),
+    )
+    start_vel = _effective_vel(vel, before_draw.get("start_vel", config.get("default_vel", 10)))
+    return_vel = _effective_vel(vel, after_draw.get("return_vel", config.get("default_vel", 10)))
+    approach_vel = _effective_vel(vel, motion_strategy.get("approach_vel", config.get("default_vel", 10)))
     blend_radius = float(smooth_config.get("blend_radius_mm", motion_strategy.get("blend_radius", 0.0)))
 
     controller = _raw_controller(config)
@@ -471,10 +505,10 @@ def _draw_pose_strokes(
                 vel=writing_vel,
                 travel_vel=travel_vel,
                 travel_z_offset=float(text_config.get("travel_z_offset", 20.0)),
-                start_vel=float(before_draw.get("start_vel", config.get("default_vel", 10))),
-                return_vel=float(after_draw.get("return_vel", config.get("default_vel", 10))),
+                start_vel=start_vel,
+                return_vel=return_vel,
                 approach_with_move_j=bool(motion_strategy.get("approach_with_move_j", False)),
-                approach_vel=float(motion_strategy.get("approach_vel", config.get("default_vel", 10))),
+                approach_vel=approach_vel,
                 enable_move=enable_move,
                 allow_raw_xmlrpc_motion=allow_raw_motion,
                 blend_radius=blend_radius,
@@ -492,10 +526,10 @@ def _draw_pose_strokes(
                 vel=writing_vel,
                 travel_vel=travel_vel,
                 travel_z_offset=float(text_config.get("travel_z_offset", 20.0)),
-                start_vel=float(before_draw.get("start_vel", config.get("default_vel", 10))),
-                return_vel=float(after_draw.get("return_vel", config.get("default_vel", 10))),
+                start_vel=start_vel,
+                return_vel=return_vel,
                 approach_with_move_j=bool(motion_strategy.get("approach_with_move_j", False)),
-                approach_vel=float(motion_strategy.get("approach_vel", config.get("default_vel", 10))),
+                approach_vel=approach_vel,
                 enable_move=enable_move,
                 allow_raw_xmlrpc_motion=allow_raw_motion,
                 blend_radius=blend_radius,
@@ -515,6 +549,11 @@ def _draw_pose_strokes(
         "paper_height": round(height, 3),
         "start_pose": start_pose,
         "return_pose": return_pose,
+        "vel": writing_vel,
+        "travel_vel": travel_vel,
+        "start_vel": start_vel,
+        "return_vel": return_vel,
+        "approach_vel": approach_vel,
         "motion_mode": "smooth" if use_smooth else "movel_strokes",
         "enable_move": enable_move,
         "allow_raw_xmlrpc_motion": allow_raw_motion,

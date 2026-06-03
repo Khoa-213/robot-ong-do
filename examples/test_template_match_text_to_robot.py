@@ -42,6 +42,12 @@ def main() -> None:
     parser.add_argument("--iterations", type=int, default=80)
     parser.add_argument("--search-radius", type=int, default=6)
     parser.add_argument("--initial-snap-radius", type=int, default=45)
+    parser.add_argument(
+        "--template-inset-scale",
+        type=float,
+        default=0.82,
+        help="Shrink affine-aligned template around each glyph center before snake relaxation.",
+    )
     parser.add_argument("--spring-weight", type=float, default=0.22)
     parser.add_argument("--smooth-window", type=int, default=3)
     parser.add_argument("--simplify", type=float, default=0.0)
@@ -81,6 +87,7 @@ def main() -> None:
         iterations=args.iterations,
         search_radius_px=args.search_radius,
         initial_snap_radius_px=args.initial_snap_radius,
+        template_inset_scale=args.template_inset_scale,
         spring_weight=args.spring_weight,
         simplify_tolerance=args.simplify,
         smooth_window=args.smooth_window,
@@ -135,7 +142,8 @@ def main() -> None:
     print(
         "Relax tuning: "
         f"iterations={args.iterations}, search_radius={args.search_radius}px, "
-        f"initial_snap={args.initial_snap_radius}px, spring={args.spring_weight}"
+        f"initial_snap={args.initial_snap_radius}px, inset={args.template_inset_scale}, "
+        f"spring={args.spring_weight}"
     )
     print(f"First pose: {pose_strokes[0][0]}")
     print(f"Last pose: {pose_strokes[-1][-1]}")

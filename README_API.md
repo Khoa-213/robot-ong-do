@@ -52,6 +52,8 @@ ReDoc: http://localhost:8000/redoc
 - `before_draw.start_pose` va `after_draw.return_pose` duoc xem la pose an toan, co the nam ngoai vung giay.
 
 ### Vi du body Robot
+Cac API move/ve/viet co field `vel` se dung gia tri nay lam toc do robot cho ca lenh chinh, di chuyen toi start, travel/approach va return. Neu khong gui `vel`, backend moi dung toc do trong config.
+
 - POST /robot/move/start
 ```json
 {
@@ -108,14 +110,6 @@ ReDoc: http://localhost:8000/redoc
   - Cong dung: kiem tra danh sach pose trong vung giay.
 - POST /safety/validate_paper_point
   - Cong dung: dung 4 goc hien tai trong `config.paper.corners` de kiem tra start/end 6D co nam trong vung giay (chi dung XY).
-
-## Gripper
-- GET /gripper/status
-  - Cong dung: doc trang thai gripper.
-- POST /gripper/open
-  - Cong dung: mo gripper; bi khoa boi enable_gripper_motion va allow_raw_xmlrpc_gripper.
-- POST /gripper/close
-  - Cong dung: dong gripper; bi khoa boi enable_gripper_motion va allow_raw_xmlrpc_gripper.
 
 ## Cac hinh ho tro
 - line_horizontal

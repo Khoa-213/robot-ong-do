@@ -6,6 +6,9 @@ from math import hypot
 import numpy as np
 from matplotlib.font_manager import FontProperties
 from matplotlib.textpath import TextPath
+from shapely.affinity import scale as shapely_scale
+from shapely.affinity import translate as shapely_translate
+from shapely.geometry import LineString
 from shapely.geometry import MultiPolygon, Point, Polygon
 from skimage.morphology import medial_axis
 
@@ -34,6 +37,7 @@ class TemplateMatchConfig:
     iterations: int = 80
     search_radius_px: int = 4
     initial_snap_radius_px: int = 45
+    template_inset_scale: float = 0.82
     spring_weight: float = 0.35
     simplify_tolerance: float = 0.0
     smooth_window: int = 3
@@ -62,7 +66,7 @@ def text_to_template_match_debug(
     config: TemplateMatchConfig | None = None,
 ) -> TemplateMatchDebug:
     cfg = config or TemplateMatchConfig()
-    outlines, fitted = _fit_template_text_per_glyph(text, font_path, cfg.font_size)
+    outlines, fitted = _fit_template_text_per_glyph(text, font_path, cfg.font_size, cfg.template_inset_scale)
     outline_geom = MultiPolygon(outlines)
     mask, raster_info = rasterize_polygons(outlines, cfg.resolution)
     skeleton, distance = medial_axis(mask, return_distance=True)
@@ -96,7 +100,12 @@ def text_to_template_match_debug(
     )
 
 
-def _fit_template_text_per_glyph(text: str, font_path: str, font_size: int) -> tuple[list[Polygon], list[list[Point2]]]:
+def _fit_template_text_per_glyph(
+    text: str,
+    font_path: str,
+    font_size: int,
+    template_inset_scale: float,
+) -> tuple[list[Polygon], list[list[Point2]]]:
     outlines: list[Polygon] = []
     fitted: list[list[Point2]] = []
     cursor_x = 0.0
@@ -115,7 +124,7 @@ def _fit_template_text_per_glyph(text: str, font_path: str, font_size: int) -> t
 
         if glyph_polygons:
             outlines.extend(glyph_polygons)
-            fitted.extend(_fit_template_to_bounds(template, glyph_bounds))
+            fitted.extend(_fit_template_to_bounds(template, glyph_bounds, template_inset_scale))
         cursor_x += advance
 
     if not outlines or not fitted:
@@ -146,7 +155,11 @@ def _glyph_outline_at_cursor(
     return polygons, bounds, advance
 
 
-def _fit_template_to_bounds(strokes: list[list[Point2]], bounds: tuple[float, float, float, float]) -> list[list[Point2]]:
+def _fit_template_to_bounds(
+    strokes: list[list[Point2]],
+    bounds: tuple[float, float, float, float],
+    inset_scale: float = 1.0,
+) -> list[list[Point2]]:
     points = [point for stroke in strokes for point in stroke]
     min_tx = min(x for x, _ in points)
     max_tx = max(x for x, _ in points)
@@ -159,18 +172,21 @@ def _fit_template_to_bounds(strokes: list[list[Point2]], bounds: tuple[float, fl
     target_height = max(max_y - min_y, 1e-9)
     scale_x = target_width / template_width
     scale_y = target_height / template_height
+    source_center = ((min_tx + max_tx) / 2.0, (min_ty + max_ty) / 2.0)
+    target_center = ((min_x + max_x) / 2.0, (min_y + max_y) / 2.0)
+    dx = target_center[0] - source_center[0]
+    dy = target_center[1] - source_center[1]
 
     fitted = []
     for stroke in strokes:
-        fitted.append(
-            [
-                (
-                    min_x + (x - min_tx) * scale_x,
-                    min_y + (y - min_ty) * scale_y,
-                )
-                for x, y in stroke
-            ]
-        )
+        if len(stroke) < 2:
+            continue
+        line = LineString(stroke)
+        line = shapely_scale(line, xfact=scale_x, yfact=scale_y, origin=source_center)
+        line = shapely_translate(line, xoff=dx, yoff=dy)
+        if inset_scale > 0 and inset_scale != 1.0:
+            line = shapely_scale(line, xfact=inset_scale, yfact=inset_scale, origin=target_center)
+        fitted.append([(float(x), float(y)) for x, y in line.coords])
     return fitted
 
 
