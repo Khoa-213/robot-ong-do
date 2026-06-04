@@ -1,112 +1,148 @@
 import sys
 sys.path.insert(0, ".")
 import matplotlib.pyplot as plt
+from math import hypot
 from shapely.geometry import MultiPolygon, Point
 from src.outline_to_skeleton.font_outline import text_to_outline_polygons
-from src.outline_to_skeleton.skeletonize import _sample_polygon_boundary, _extract_longest_paths
-import scipy.spatial
-import networkx as nx
-from math import hypot
+from src.outline_to_skeleton.skeletonize import _sample_polygon_boundary, _extract_longest_paths, polygons_to_robot_paths
 
-def _prune_spurs(G: nx.Graph, theta: float = 1.5) -> nx.Graph:
-    G_pruned = G.copy()
-    while True:
-        leaves = [n for n, d in G_pruned.degree() if d == 1]
-        if not leaves:
-            break
-        edges_to_remove = []
-        for leaf in leaves:
-            path = [leaf]
-            current = leaf
-            visited = {leaf}
-            while True:
-                neighbors = [n for n in G_pruned.neighbors(current) if n not in visited]
-                if len(neighbors) == 1:
-                    next_node = neighbors[0]
-                    path.append(next_node)
-                    visited.add(next_node)
-                    if G_pruned.degree(next_node) >= 3:
-                        break
-                    current = next_node
-                else:
-                    break
-            if len(path) > 1:
-                end_node = path[-1]
-                if G_pruned.degree(end_node) >= 3:
-                    path_len = 0.0
-                    for u, v in zip(path, path[1:]):
-                        path_len += G_pruned[u][v]['weight']
-                    junction_radius = G_pruned.nodes[end_node].get('radius', 1.0)
-                    if path_len < theta * junction_radius:
-                        for u, v in zip(path, path[1:]):
-                            edges_to_remove.append((u, v))
-        if not edges_to_remove:
-            break
-        G_pruned.remove_edges_from(edges_to_remove)
-        isolated = [n for n, d in G_pruned.degree() if d == 0]
-        G_pruned.remove_nodes_from(isolated)
-    return G_pruned
+# ── Helpers to replicate robot post-processing in pixel space ─────────
 
-def get_skeleton_pruned(polygon, spacing=1.0, theta=1.5, min_branch_length=4.0):
-    boundary_pts = _sample_polygon_boundary(polygon, spacing)
-    if len(boundary_pts) < 4:
-        return []
-    vor = scipy.spatial.Voronoi(boundary_pts)
-    
-    from shapely.prepared import prep
-    prep_poly = prep(polygon)
-    vertices_inside = {}
-    for idx, vertex in enumerate(vor.vertices):
-        pt = Point(vertex[0], vertex[1])
-        if prep_poly.contains(pt):
-            vertices_inside[idx] = vertex
+def _xy_dist(a, b) -> float:
+    return hypot(a[0] - b[0], a[1] - b[1])
 
-    vertex_radii = {}
-    def get_radius(v_idx, pt) -> float:
-        if v_idx not in vertex_radii:
-            vertex_radii[v_idx] = float(polygon.boundary.distance(pt))
-        return vertex_radii[v_idx]
 
-    G = nx.Graph()
-    for v1, v2 in vor.ridge_vertices:
-        if v1 in vertices_inside and v2 in vertices_inside:
-            p1 = vertices_inside[v1]
-            p2 = vertices_inside[v2]
-            midpoint = Point((p1[0] + p2[0]) / 2.0, (p1[1] + p2[1]) / 2.0)
-            if prep_poly.contains(midpoint):
-                dist = hypot(p2[0] - p1[0], p2[1] - p1[1])
-                pt1 = Point(p1[0], p1[1])
-                pt2 = Point(p2[0], p2[1])
-                r1 = get_radius(v1, pt1)
-                r2 = get_radius(v2, pt2)
-                G.add_node(v1, pos=tuple(p1), radius=r1)
-                G.add_node(v2, pos=tuple(p2), radius=r2)
-                G.add_edge(v1, v2, weight=dist)
+def _stroke_length_2d(stroke) -> float:
+    return sum(_xy_dist(a, b) for a, b in zip(stroke, stroke[1:]))
 
-    G_pruned = _prune_spurs(G, theta)
-    return _extract_longest_paths(G_pruned, min_branch_length)
+
+def _prune_short_px(strokes, min_len_px):
+    return [s for s in strokes if len(s) >= 2 and _stroke_length_2d(s) >= min_len_px]
+
+
+def _connect_nearby_px(strokes, max_gap_px):
+    if max_gap_px <= 0 or len(strokes) <= 1:
+        return [list(s) for s in strokes]
+    remaining = [list(s) for s in strokes if len(s) >= 2]
+    connected = []
+    while remaining:
+        current = remaining.pop(0)
+        changed = True
+        while changed and remaining:
+            changed = False
+            best_i, best_rev, best_d = -1, False, max_gap_px
+            for i, s in enumerate(remaining):
+                d0 = _xy_dist(current[-1], s[0])
+                d1 = _xy_dist(current[-1], s[-1])
+                if d0 <= best_d:
+                    best_i, best_rev, best_d = i, False, d0
+                if d1 <= best_d:
+                    best_i, best_rev, best_d = i, True, d1
+            if best_i >= 0:
+                nxt = remaining.pop(best_i)
+                if best_rev:
+                    nxt.reverse()
+                current.extend(nxt)
+                changed = True
+        connected.append(current)
+    return connected
+
+
+def _trim_start_px(stroke, trim_px):
+    remaining = float(trim_px)
+    for i, (a, b) in enumerate(zip(stroke, stroke[1:])):
+        seg = _xy_dist(a, b)
+        if seg <= 1e-9:
+            continue
+        if remaining < seg:
+            t = remaining / seg
+            interp = tuple(a[ax] + (b[ax] - a[ax]) * t for ax in range(len(a)))
+            return [interp] + list(stroke[i + 1:])
+        remaining -= seg
+    return []
+
+
+def _trim_ends_px(strokes, trim_px):
+    if trim_px <= 0:
+        return [list(s) for s in strokes]
+    result = []
+    for s in strokes:
+        s2 = _trim_start_px(s, trim_px)
+        if not s2:
+            continue
+        s2 = list(reversed(_trim_start_px(list(reversed(s2)), trim_px)))
+        if len(s2) >= 2:
+            result.append(s2)
+    return result
+
 
 def plot_times_text(text, filename):
     polys = text_to_outline_polygons(text, "C:/Windows/Fonts/times.ttf", 200)
     geom = MultiPolygon(polys)
-    strokes = get_skeleton_pruned(geom, spacing=1.0, theta=1.5, min_branch_length=4.0)
+    paths = polygons_to_robot_paths(
+        geom,
+        resolution=2.0,
+        z_light=-0.5,
+        z_heavy=-3.0,
+        point_spacing=1.0,
+        min_branch_length=4.0,
+        simplify_tolerance=0.05,
+        theta=1.5,
+    )
+
+    if not paths:
+        print("[Preview] No strokes generated!")
+        return
+
+    # Calculate bounding box for pixel -> mm scaling
+    all_pts = [pt for s in paths for pt in s]
+    min_x = min(pt[0] for pt in all_pts)
+    max_x = max(pt[0] for pt in all_pts)
+    min_y = min(pt[1] for pt in all_pts)
+    max_y = max(pt[1] for pt in all_pts)
+    px_w = max(max_x - min_x, 1.0)
+    px_h = max(max_y - min_y, 1.0)
+
+    # Robot uses fit_width_mm=90, fit_height_mm=80
+    scale_mm_per_px = min(90.0 / px_w, 80.0 / px_h)
+
+    # Apply Y inversion to match robot drawing
+    def inv_y(stroke):
+        return [(x, min_y + max_y - y, z) for x, y, z in stroke]
+
+    inverted = [inv_y(s) for s in paths]
+
+    # Apply post-processing equivalent to robot (in pixel space)
+    PRUNE_MM, CONNECT_MM, TRIM_MM = 8.0, 2.0, 3.0
+    prune_px = PRUNE_MM / scale_mm_per_px
+    connect_px = CONNECT_MM / scale_mm_per_px
+    trim_px = TRIM_MM / scale_mm_per_px
+
+    processed = _prune_short_px(inverted, prune_px)
+    processed = _connect_nearby_px(processed, connect_px)
+    processed = _trim_ends_px(processed, trim_px)
 
     fig, ax = plt.subplots(figsize=(10, 6))
     for poly in polys:
-        x, y = poly.exterior.xy
-        ax.plot(x, y, color="#ccc", linestyle="--", linewidth=1.5)
+        ox, oy = poly.exterior.xy
+        oy_inv = [min_y + max_y - yi for yi in oy]
+        ax.plot(ox, oy_inv, color="#ccc", linestyle="--", linewidth=1.5)
         for interior in poly.interiors:
             xi, yi = interior.xy
-            ax.plot(xi, yi, color="#ccc", linestyle="--", linewidth=1.5)
+            yi_inv = [min_y + max_y - yii for yii in yi]
+            ax.plot(xi, yi_inv, color="#ccc", linestyle="--", linewidth=1.5)
 
-    for idx, stroke in enumerate(strokes):
+    for idx, stroke in enumerate(processed):
         xs = [pt[0] for pt in stroke]
         ys = [pt[1] for pt in stroke]
         ax.plot(xs, ys, linewidth=2.5, label=f"Stroke {idx+1}")
         ax.scatter(xs, ys, s=15, zorder=3)
 
     ax.set_aspect("equal")
-    ax.set_title(f"Times New Roman Skeleton: '{text}'")
+    ax.set_title(
+        f"Robot Skeleton Preview – Times New Roman: '{text}'\n"
+        f"[invert_y ✓  |  prune {PRUNE_MM} mm  |  connect {CONNECT_MM} mm  |  trim {TRIM_MM} mm]"
+    )
     ax.legend(loc='upper right', bbox_to_anchor=(1.25, 1.0))
     plt.tight_layout()
     plt.savefig(filename, dpi=150)
@@ -115,3 +151,4 @@ def plot_times_text(text, filename):
 
 if __name__ == "__main__":
     plot_times_text("Nhẫn", "output/nhan_times_skeleton.png")
+
