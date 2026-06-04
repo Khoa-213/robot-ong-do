@@ -154,7 +154,7 @@
     "travel_z_offset": 20.0,
     "prune_tip_length": 8.0,
     "connect_gap": 2.0,
-    "trim_ends": 3.0
+    "trim_ends": 1.0
   },
   "after_draw": {
     "return_to_bottom_left": true,

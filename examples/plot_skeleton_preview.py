@@ -126,7 +126,7 @@ def main():
     inverted = [inv_y(s) for s in paths]
 
     # 4. Apply post-processing equivalent to robot (in pixel space)
-    PRUNE_MM, CONNECT_MM, TRIM_MM = 8.0, 2.0, 3.0
+    PRUNE_MM, CONNECT_MM, TRIM_MM = 8.0, 2.0, 1.0
     prune_px = PRUNE_MM / scale_mm_per_px
     connect_px = CONNECT_MM / scale_mm_per_px
     trim_px = TRIM_MM / scale_mm_per_px

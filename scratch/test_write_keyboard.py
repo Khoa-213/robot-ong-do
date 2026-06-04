@@ -157,7 +157,7 @@ def show_skeleton_preview_locally(text, font_path, out_img):
         inverted = [inv_y(s) for s in paths]
 
         # 4. Áp dụng post-processing tương đương robot (đơn vị pixel)
-        PRUNE_MM, CONNECT_MM, TRIM_MM = 8.0, 2.0, 3.0
+        PRUNE_MM, CONNECT_MM, TRIM_MM = 8.0, 2.0, 1.0
         prune_px   = PRUNE_MM   / scale_mm_per_px
         connect_px = CONNECT_MM / scale_mm_per_px
         trim_px    = TRIM_MM    / scale_mm_per_px
