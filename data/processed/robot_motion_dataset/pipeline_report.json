@@ -1,0 +1,10 @@
+{
+  "dataset_name": "bridge",
+  "openx_episode_count": 0,
+  "synthetic_episode_count": 220,
+  "total_episode_count": 220,
+  "used_openx_data": false,
+  "final_jsonl": "D:\\robot-ong-do\\data\\processed\\robot_motion_dataset\\final_dataset.jsonl",
+  "unity_export": "D:\\robot-ong-do\\data\\exports\\unity\\unity_motion_dataset.json",
+  "isaac_export": "D:\\robot-ong-do\\data\\exports\\isaac\\isaac_motion_dataset.json"
+}

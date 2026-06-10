@@ -1,0 +1,4 @@
+tensorflow
+tensorflow-datasets
+importlib_resources
+apache-beam
