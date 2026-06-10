@@ -234,9 +234,9 @@ def draw_text_skeleton_times(text: str, vel: float | None, continuous: bool | No
         fit_height_mm=80.0,
     )
 
-    prune_tip_length = 28.0
-    connect_gap = 8.0
-    trim_ends = 3.0
+    prune_tip_length = float(text_demo.get("prune_tip_length", 5.0))
+    connect_gap = float(text_demo.get("connect_gap", 8.0))
+    trim_ends = float(text_demo.get("trim_ends", 3.0))
 
     pose_strokes = prune_short_pose_strokes(pose_strokes, prune_tip_length)
     continuous_mode = continuous if continuous is not None else bool(text_demo.get("continuous", False))

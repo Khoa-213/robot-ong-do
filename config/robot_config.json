@@ -151,7 +151,10 @@
     "point_spacing": 0.025,
     "vel": 12,
     "travel_vel": 18,
-    "travel_z_offset": 20.0
+    "travel_z_offset": 20.0,
+    "prune_tip_length": 8.0,
+    "connect_gap": 2.0,
+    "trim_ends": 1.0
   },
   "after_draw": {
     "return_to_bottom_left": true,
