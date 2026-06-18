@@ -166,6 +166,82 @@ python -m outline_to_skeleton --input-svg assets/input/tam_outline.svg --out out
 
 Debug SVG intentionally does not include the original filled outline. `show_radius=True` or `--show-radius` adds small centerline markers only for pressure inspection.
 
+## Font Skeleton Preview And Approval
+
+`src/font_skeleton_pipeline` wraps the existing outline-to-centerline engine and produces a full preview run before any robot motion is allowed. It accepts keyboard text plus a `.ttf` or `.otf` font, extracts a centerline trajectory, fits it to the measured paper corners, validates safety, and writes a timestamped run directory under `outputs/`.
+
+Preview command:
+
+```powershell
+python -m src.font_skeleton_pipeline --text "Tam" --font "assets/fonts/UTM ThuPhap Thien An.ttf" --preview-only
+```
+
+Recommended handwriting demo font:
+
+```powershell
+python -m src.font_skeleton_pipeline --text-file assets\text_samples\tam_vi.txt --font assets\fonts\PlaywriteVN-wght.ttf --preview-only
+```
+
+`Playwrite VN` is an OFL handwriting font from `google/fonts` with Vietnamese language metadata. It usually produces a cleaner centerline than thick brush/calligraphy fonts such as Thiên An, because very thick brush shapes create many skeleton branches.
+
+Each run writes:
+
+- `input_text.txt`
+- `original_font_render.png`
+- `raw_skeleton.png`
+- `cleaned_skeleton.png`
+- `stroke_order_preview.png`
+- `robot_trajectory_preview.png`
+- `robot_trajectory_preview.svg`
+- `robot_trajectory.csv`
+- `robot_trajectory.json`
+- `validation_report.json`
+- `summary.txt`
+
+Preview colors and lines:
+
+- Blue solid lines are `PEN_DOWN` draw motion.
+- Gray dashed lines are `PEN_UP` travel, approach, lift, or retract motion.
+- Green markers are stroke starts.
+- Red markers are stroke ends.
+- Paper bounds come from `config/robot_config.json` measured paper corners.
+
+The CSV columns are:
+
+```csv
+index,stroke_id,motion_type,pen_state,x_mm,y_mm,z_mm,rx_deg,ry_deg,rz_deg,velocity_mm_s,acceleration_mm_s2,blend_radius_mm
+```
+
+Robot execution is a separate, locked step. First review the PNG/SVG/CSV/JSON, then approve only a safe trajectory:
+
+```powershell
+python -m src.font_skeleton_pipeline --trajectory outputs/run_YYYYMMDD_HHMMSS/robot_trajectory.json --approve
+```
+
+Real execution still requires typing `EXECUTE`:
+
+```powershell
+python -m src.font_skeleton_pipeline --trajectory outputs/run_YYYYMMDD_HHMMSS/robot_trajectory.json --execute
+```
+
+Mock execution, which records the command stream without connecting to the robot:
+
+```powershell
+python -m src.font_skeleton_pipeline --trajectory outputs/run_YYYYMMDD_HHMMSS/robot_trajectory.json --mock
+```
+
+Hershey single-line fonts are supported when `Hershey-Fonts` is installed in the active Python environment. In this repo that package is installed in `.venv`, so use:
+
+```powershell
+.\.venv\Scripts\python.exe -m src.font_skeleton_pipeline --list-hershey-fonts
+.\.venv\Scripts\python.exe -m src.font_skeleton_pipeline --text "Tam" --hershey-font scripts --preview-only
+.\.venv\Scripts\python.exe -m src.font_skeleton_pipeline --text "Tam" --hershey-font cursive --preview-only
+```
+
+Hershey fonts are native stroke fonts, so they avoid outline skeleton artifacts. They are best for ASCII demos; Vietnamese diacritics may not be present in the built-in Hershey maps.
+
+Configuration lives in `config/robot_config.json` under `font_skeleton_pipeline`. Keep `preview_only_default=true`; do not run the robot if the preview shape, stroke order, paper bounds, Z values, or validation report look wrong. Decorative fonts can still produce poor skeletons, so treat font similarity warnings as a reason to adjust thresholds or choose another font.
+
 Fairino integration:
 
 ```python
