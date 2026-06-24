@@ -114,3 +114,7 @@ Dưới đây là sơ đồ tổ chức mã nguồn và vai trò của từng th
 | 2026-05-23 | Gripper Audit | `docs/gripper_project_audit.md` | Thực hiện kiểm định tài liệu tay gắp JODELL EPG40-050, thiết kế cấu trúc Modbus RTU và mã đăng ký điều khiển. |
 | 2026-06-17 | Project Scan | `docs/project_scan_report.md` | Quét toàn bộ kiến trúc mã nguồn dự án, phân tích API FastAPI, Streamlit UI và các điểm gọi chuyển động của robot. |
 | 2026-06-24 | Thiết lập tài liệu | `PROJECT_NOTES.md` | Tạo tài liệu chỉ dẫn phát triển và yêu cầu cập nhật nhật ký cho lập trình viên/AI Agent. |
+| 2026-06-24 | Thử nghiệm & Kiểm chứng | `PROJECT_NOTES.md`, `walkthrough.md` | Áp dụng phương án invert_y=True và trích xuất thành công đường đi thực tế (robot trajectory) cho chữ "Nhẫn". |
+| 2026-06-24 | Tối ưu hóa nét & Thứ tự viết | `src/outline_to_skeleton/skeletonize.py`, `walkthrough.md` | Triển khai phân tách góc nhọn và nối nét collinear/serif để sửa lỗi đứt nét chữ "h", đồng thời sắp xếp thứ tự viết theo quy tắc thư pháp tiếng Việt. |
+
+

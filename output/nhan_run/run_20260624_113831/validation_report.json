@@ -1,0 +1,12 @@
+{
+  "is_safe": true,
+  "issues": [],
+  "metrics": {
+    "point_count": 388.0,
+    "draw_length_mm": 305.592,
+    "travel_length_mm": 3089.017,
+    "max_step_distance_mm": 82.23,
+    "pen_down_travel_errors": 0.0,
+    "pen_up_draw_errors": 0.0
+  }
+}

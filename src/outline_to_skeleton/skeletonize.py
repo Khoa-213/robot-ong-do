@@ -211,6 +211,12 @@ def polygons_to_robot_paths(
     if not voronoi_strokes:
         raise SkeletonExtractionError("Voronoi skeleton is empty")
 
+    # Apply split-and-merge optimization on raw Voronoi strokes
+    split_strokes = []
+    for s in voronoi_strokes:
+        split_strokes.extend(_split_stroke_at_sharp_turns(s, angle_threshold_deg=50, k=4))
+    voronoi_strokes = _merge_collinear_strokes(split_strokes, dist_threshold=5.0, angle_threshold_deg=35, k=4)
+
     all_radii = [r for stroke in voronoi_strokes for x, y, r in stroke]
     if not all_radii:
         raise SkeletonExtractionError("Skeleton has no radius samples")
@@ -243,11 +249,261 @@ def polygons_to_robot_paths(
             prepared = enforce_max_z_step(prepared)
         strokes.append(_round_stroke(prepared))
 
-    strokes = order_strokes_nearest(strokes)
+    strokes = _sort_calligraphy_strokes(strokes)
     if not strokes:
         raise RobotPathError("Output robot path is empty")
     _validate_robot_paths(strokes, z_heavy)
     return strokes
+
+
+def _angle_between_vectors(v1: tuple[float, float], v2: tuple[float, float]) -> float:
+    from math import atan2
+    dot = v1[0]*v2[0] + v1[1]*v2[1]
+    det = v1[0]*v2[2-2] - v1[2-2]*v2[0] # det = v1[0]*v2[1] - v1[1]*v2[0]
+    det = v1[0]*v2[1] - v1[1]*v2[0]
+    return abs(atan2(det, dot))
+
+
+def _split_stroke_at_sharp_turns(stroke: list[tuple[float, float, float]], angle_threshold_deg: float = 50, k: int = 4) -> list[list[tuple[float, float, float]]]:
+    from math import pi, hypot
+    if len(stroke) <= 2 * k:
+        return [stroke]
+    
+    threshold_rad = angle_threshold_deg * pi / 180.0
+    splits = [0]
+    
+    for i in range(k, len(stroke) - k):
+        v1 = (stroke[i][0] - stroke[i-k][0], stroke[i][1] - stroke[i-k][1])
+        v2 = (stroke[i+k][0] - stroke[i][0], stroke[i+k][1] - stroke[i][1])
+        
+        len1 = hypot(*v1)
+        len2 = hypot(*v2)
+        if len1 < 1e-6 or len2 < 1e-6:
+            continue
+            
+        angle = _angle_between_vectors(v1, v2)
+        if angle > threshold_rad:
+            splits.append(i)
+            
+    splits.append(len(stroke))
+    
+    parts = []
+    for start, end in zip(splits, splits[1:]):
+        part = stroke[start:end]
+        if start > 0 and len(parts) > 0:
+            parts[-1] = parts[-1] + [stroke[start]]
+        if len(part) >= 2:
+            parts.append(part)
+            
+    return parts if parts else [stroke]
+
+
+def _merge_collinear_strokes(strokes: list[list[tuple[float, float, float]]], dist_threshold: float = 5.0, angle_threshold_deg: float = 35, k: int = 4) -> list[list[tuple[float, float, float]]]:
+    from math import pi, hypot
+    remaining = [list(s) for s in strokes if len(s) >= 2]
+    merged_any = True
+    threshold_rad = angle_threshold_deg * pi / 180.0
+    
+    while merged_any:
+        merged_any = False
+        n = len(remaining)
+        best_pair = None
+        best_score = float('inf')
+        best_merge_type = None
+        
+        for i in range(n):
+            for j in range(i + 1, n):
+                s1 = remaining[i]
+                s2 = remaining[j]
+                
+                endpoints = [
+                    (s1[-1], s2[0], 'end-start', s1, s2, False, False),
+                    (s1[0], s2[-1], 'start-end', s1, s2, True, True),
+                    (s1[-1], s2[-1], 'end-end', s1, s2, False, True),
+                    (s1[0], s2[0], 'start-start', s1, s2, True, False)
+                ]
+                
+                for p1, p2, mtype, stroke1, stroke2, rev1, rev2 in endpoints:
+                    d = hypot(p1[0] - p2[0], p1[1] - p2[1])
+                    if d < dist_threshold:
+                        if not rev1:
+                            t1 = (stroke1[-1][0] - stroke1[-min(len(stroke1), k)][0], stroke1[-1][1] - stroke1[-min(len(stroke1), k)][1])
+                        else:
+                            t1 = (stroke1[0][0] - stroke1[min(len(stroke1), k)-1][0], stroke1[0][1] - stroke1[min(len(stroke1), k)-1][1])
+                            
+                        if not rev2:
+                            t2 = (stroke2[min(len(stroke2), k)-1][0] - stroke2[0][0], stroke2[min(len(stroke2), k)-1][1] - stroke2[0][1])
+                        else:
+                            t2 = (stroke2[-1][0] - stroke2[-min(len(stroke2), k)][0], stroke2[-1][1] - stroke2[-min(len(stroke2), k)][1])
+                            t2 = (-t2[0], -t2[1])
+                            
+                        l1 = hypot(*t1)
+                        l2 = hypot(*t2)
+                        if l1 < 1e-6 or l2 < 1e-6:
+                            continue
+                            
+                        len1 = sum(hypot(stroke1[a+1][0]-stroke1[a][0], stroke1[a+1][1]-stroke1[a][1]) for a in range(len(stroke1)-1))
+                        len2 = sum(hypot(stroke2[a+1][0]-stroke2[a][0], stroke2[a+1][1]-stroke2[a][1]) for a in range(len(stroke2)-1))
+                        is_serif = len1 < 25.0 or len2 < 25.0
+                        
+                        angle = _angle_between_vectors(t1, t2)
+                        effective_angle_threshold = threshold_rad
+                        if d < 2.0:
+                            effective_angle_threshold = 95 * pi / 180.0
+                        elif is_serif:
+                            effective_angle_threshold = 75 * pi / 180.0
+                            
+                        if angle < effective_angle_threshold:
+                            score = d + angle * 5.0
+                            if score < best_score:
+                                best_score = score
+                                best_pair = (i, j, rev1, rev2)
+                                best_merge_type = mtype
+                                
+        if best_pair is not None:
+            i, j, rev1, rev2 = best_pair
+            s1 = remaining[i]
+            s2 = remaining[j]
+            
+            part1 = list(reversed(s1)) if rev1 else list(s1)
+            part2 = list(reversed(s2)) if rev2 else list(s2)
+            
+            merged = part1 + part2[1:]
+            remaining.pop(max(i, j))
+            remaining.pop(min(i, j))
+            remaining.append(merged)
+            merged_any = True
+            
+    return remaining
+
+
+def _orient_stroke(stroke: list[tuple[float, float, float]]) -> list[tuple[float, float, float]]:
+    if len(stroke) < 2:
+        return stroke
+    p1 = stroke[0]
+    pn = stroke[-1]
+    dx = pn[0] - p1[0]
+    dy = pn[1] - p1[1]
+    if abs(dx) >= abs(dy):
+        # horizontal-ish: left-to-right
+        if dx < 0:
+            return list(reversed(stroke))
+    else:
+        # vertical-ish: top-to-bottom (Y increases upwards)
+        if dy > 0:
+            return list(reversed(stroke))
+    return stroke
+
+
+def _sort_calligraphy_strokes(strokes: list[list[tuple[float, float, float]]]) -> list[list[tuple[float, float, float]]]:
+    from math import hypot
+    if not strokes:
+        return strokes
+
+    all_pts = [p for s in strokes for p in s]
+    all_ys = [p[1] for p in all_pts]
+    min_y_all, max_y_all = min(all_ys), max(all_ys)
+    text_height = max_y_all - min_y_all if max_y_all > min_y_all else 1.0
+    gap_threshold = 0.45 * text_height
+
+    # Calculate stroke boundaries and sort by min_x
+    stroke_data = []
+    for s in strokes:
+        xs = [pt[0] for pt in s]
+        ys = [pt[1] for pt in s]
+        min_x, max_x = min(xs), max(xs)
+        min_y, max_y = min(ys), max(ys)
+        mid_y = sum(ys) / len(ys)
+        stroke_len = sum(hypot(xs[i+1]-xs[i], ys[i+1]-ys[i]) for i in range(len(s)-1))
+        
+        stroke_data.append({
+            'stroke': s,
+            'min_x': min_x,
+            'max_x': max_x,
+            'min_y': min_y,
+            'max_y': max_y,
+            'mid_y': mid_y,
+            'stroke_len': stroke_len
+        })
+        
+    stroke_data.sort(key=lambda x: x['min_x'])
+
+    # Group into words based on horizontal gaps
+    word_groups: list[list[dict]] = []
+    for sd in stroke_data:
+        if not word_groups:
+            word_groups.append([sd])
+        else:
+            last_group = word_groups[-1]
+            group_max_x = max(item['max_x'] for item in last_group)
+            if sd['min_x'] <= group_max_x + gap_threshold:
+                last_group.append(sd)
+            else:
+                word_groups.append([sd])
+
+    sorted_strokes = []
+    
+    # Process each word group independently
+    for group in word_groups:
+        # Step 1: Initial classification of BASE candidate strokes
+        base_candidates = []
+        non_base_candidates = []
+        
+        for item in group:
+            min_y = item['min_y']
+            max_y = item['max_y']
+            stroke_len = item['stroke_len']
+            
+            is_base = min_y < min_y_all + 0.3 * text_height
+            # If dot below (very small and low), it is classified as a tone mark
+            if is_base and max_y < min_y_all + 0.2 * text_height and stroke_len < 0.1 * text_height:
+                is_base = False
+                
+            if is_base:
+                base_candidates.append(item)
+            else:
+                non_base_candidates.append(item)
+                
+        # Get list of base stroke geometries
+        word_base_strokes = [c['stroke'] for c in base_candidates]
+        word_diacritic_strokes = []
+        word_tone_strokes = []
+        
+        # Step 2: Check distance to base strokes for non-base candidates to reclassify serifs
+        for item in non_base_candidates:
+            stroke = item['stroke']
+            min_dist = float('inf')
+            
+            for b_stroke in word_base_strokes:
+                for p1 in stroke:
+                    for p2 in b_stroke:
+                        d = hypot(p1[0] - p2[0], p1[1] - p2[1])
+                        if d < min_dist:
+                            min_dist = d
+                            
+            if min_dist < 8.0:
+                # Serif/connected stroke, reclassify as base
+                word_base_strokes.append(stroke)
+            else:
+                # Floating diacritic or tone mark
+                if item['mid_y'] >= min_y_all + 0.72 * text_height:
+                    word_tone_strokes.append(stroke)
+                elif item['max_y'] < min_y_all + 0.2 * text_height:
+                    # lower tone dot
+                    word_tone_strokes.append(stroke)
+                else:
+                    word_diacritic_strokes.append(stroke)
+                    
+        # Step 3: Sort each layer from left to right and orient strokes naturally
+        sorted_base = [_orient_stroke(s) for s in sorted(word_base_strokes, key=lambda s: min(p[0] for p in s))]
+        sorted_diacritics = [_orient_stroke(s) for s in sorted(word_diacritic_strokes, key=lambda s: min(p[0] for p in s))]
+        sorted_tones = [_orient_stroke(s) for s in sorted(word_tone_strokes, key=lambda s: min(p[0] for p in s))]
+        
+        # Concatenate in calligraphy order: Base -> Letter Diacritics -> Tone Marks
+        sorted_strokes.extend(sorted_base + sorted_diacritics + sorted_tones)
+        
+    return sorted_strokes
+
 
 
 def _round_stroke(stroke: list[tuple[float, float, float]]) -> list[tuple[float, float, float]]:

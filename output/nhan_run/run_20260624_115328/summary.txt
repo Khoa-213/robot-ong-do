@@ -1,0 +1,16 @@
+Font skeleton trajectory summary
+Text: Nhẫn
+Font: C:\Windows\Fonts\times.ttf
+Trajectory ID: 4a88b0bc54188032
+Approved: False
+Stroke count: 17
+Point count: 383
+PEN_DOWN points: 332
+PEN_UP/PEN_TRANSITION points: 51
+X min/max: -69.426/20.574
+Y min/max: 442.641/477.919
+Z min/max: 289.212/371.442
+Font IoU: 0.6723
+Font outside ratio: 0.0
+Validation safe: True
+Robot execution is locked until this JSON is reviewed and approved.
