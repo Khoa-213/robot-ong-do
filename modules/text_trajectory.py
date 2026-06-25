@@ -89,6 +89,10 @@ def build_text_pose_strokes(config: dict[str, Any], text: str) -> list[list[list
         strokes = _svg_skeleton_strokes(demo, text)
     elif mode == "calligraphy":
         strokes = _calligraphy_text_strokes(text)
+    elif mode == "calligraphy_v2":
+        # Calligraphy V2: bộ phân rã thư pháp đầy đủ với Z-depth theo loại nét
+        # Xử lý đặc biệt: strokes đã có Z, bỏ qua fit_strokes_to_uv thông thường
+        return _build_calligraphy_v2_pose_strokes(config, text, demo)
     else:
         strokes = _single_line_text_strokes(text)
     normalized_strokes = fit_strokes_to_uv(
@@ -493,26 +497,135 @@ def _calligraphy_text_strokes(text: str) -> list[list[Point]]:
     return strokes
 
 
+def _build_calligraphy_v2_pose_strokes(
+    config: dict[str, Any],
+    text: str,
+    demo: dict[str, Any],
+) -> list[list[list[float]]]:
+    """
+    Calligraphy V2 — Dùng CalligraphyParser để sinh pose strokes có Z-depth.
+
+    Khác với mode calligraphy thông thường (Z=0 cố định), mode này:
+      - Gọi calligraphy_parser.parse_vietnamese_text() để lấy nét + ZProfile
+      - Ánh xạ xy sang UV space (paper-normalized)
+      - Gán Z thực từ ZProfile + z_light/z_heavy config
+      - Trả về pose strokes tương thích với robot controller
+    """
+    try:
+        from modules.calligraphy_parser import (
+            parse_vietnamese_text,
+            calligraphy_strokes_to_robot_paths,
+            GLYPH_WIDTH as CP_GLYPH_WIDTH,
+            GLYPH_GAP as CP_GLYPH_GAP,
+        )
+    except ImportError as exc:
+        raise ImportError(
+            "calligraphy_parser module không khả dụng. "
+            "Kiểm tra file modules/calligraphy_parser.py"
+        ) from exc
+
+    z_light = float(demo.get("z_light", config.get("font_skeleton_pipeline", {}).get("z_light", -0.5)))
+    z_heavy = float(demo.get("z_heavy", config.get("font_skeleton_pipeline", {}).get("z_heavy", -3.0)))
+    font_scale = float(demo.get("font_size", 1.0)) * 220.0  # normalize to font-pixel space
+
+    # Bước 1: Phân rã văn bản thành CalligraphyStroke có thứ tự
+    parsed_strokes = parse_vietnamese_text(text)
+    if not parsed_strokes:
+        raise ValueError(f"calligraphy_v2: Không có nét nào được sinh ra cho: {text!r}")
+
+    # Bước 2: Chuyển sang robot paths với Z-depth
+    raw_paths = calligraphy_strokes_to_robot_paths(
+        parsed_strokes, z_light=z_light, z_heavy=z_heavy, font_scale=font_scale
+    )
+    if not raw_paths:
+        raise ValueError(f"calligraphy_v2: calligraphy_strokes_to_robot_paths trả về rỗng")
+
+    # Bước 3: Tính bounding box để normalize xy → UV [u_min, u_max] × [v_min, v_max]
+    all_pts = [(x, y) for path in raw_paths for x, y, _z in path]
+    if not all_pts:
+        raise ValueError("calligraphy_v2: Không có điểm tọa độ nào")
+
+    xs = [p[0] for p in all_pts]
+    ys = [p[1] for p in all_pts]
+    min_x, max_x = min(xs), max(xs)
+    min_y, max_y = min(ys), max(ys)
+    width  = max(max_x - min_x, 1e-9)
+    height = max(max_y - min_y, 1e-9)
+
+    u_min = float(demo.get("u_min", 0.2))
+    u_max = float(demo.get("u_max", 0.8))
+    v_min = float(demo.get("v_min", 0.2))
+    v_max = float(demo.get("v_max", 0.8))
+    invert_y = bool(demo.get("invert_y", True))
+    paper_w, paper_h = paper_size(config)
+
+    # Tỉ lệ đồng nhất (preserve aspect ratio)
+    u_span = u_max - u_min
+    v_span = v_max - v_min
+    scale_mm = min((u_span * paper_w) / width, (v_span * paper_h) / height)
+    scale_x = scale_mm / paper_w
+    scale_y = scale_mm / paper_h
+    fitted_w = width  * scale_x
+    fitted_h = height * scale_y
+    u_offset = u_min + (u_span - fitted_w) / 2.0
+    v_offset = v_min + (v_span - fitted_h) / 2.0
+
+    # Bước 4: Tạo pose strokes với UV + Z thực
+    pose_strokes: list[list[list[float]]] = []
+    for path in raw_paths:
+        if len(path) < 2:
+            continue
+        poses: list[list[float]] = []
+        for x, y, z_val in path:
+            u = u_offset + (x - min_x) * scale_x
+            source_y = max_y - y if invert_y else y - min_y
+            v = v_offset + source_y * scale_y
+            # Lấy pose từ paper zone (x,y) rồi override Z với giá trị từ parser (thêm offset vào paper_z)
+            base_pose = build_pose_in_paper(config, u, v)
+            # base_pose = [x, y, z, rx, ry, rz] — cộng z_val vào z của base_pose
+            if len(base_pose) >= 3:
+                pose_with_z = list(base_pose)
+                pose_with_z[2] = base_pose[2] + z_val
+                poses.append(pose_with_z)
+            else:
+                poses.append(base_pose)
+        if len(poses) >= 2:
+            pose_strokes.append(poses)
+
+    if not pose_strokes:
+        raise ValueError(f"calligraphy_v2: Không sinh được pose nào cho: {text!r}")
+
+    return pose_strokes
+
+
 def _calligraphy_glyph(char: str) -> Glyph | None:
     glyphs: dict[str, Glyph] = {
+        "1": [[(0.1, 0.48), (0.2, 0.495), (0.3, 0.508), (0.4, 0.517), (0.5, 0.52), (0.6, 0.517), (0.7, 0.508), (0.8, 0.495), (0.9, 0.48)]],
+        "2": [[(0.5, 0.9), (0.5, 0.8), (0.5, 0.7), (0.5, 0.6), (0.5, 0.5), (0.5, 0.4), (0.5, 0.3), (0.5, 0.2), (0.5, 0.1)]],
+        "3": [[(0.35, 0.7), (0.41, 0.66), (0.47, 0.62), (0.53, 0.56), (0.59, 0.48), (0.65, 0.4)]],
+        "4": [[(0.75, 0.95), (0.685, 0.86), (0.621, 0.77), (0.56, 0.68), (0.502, 0.59), (0.45, 0.5), (0.402, 0.41), (0.36, 0.32), (0.321, 0.23), (0.285, 0.14), (0.25, 0.05)]],
+        "5": [[(0.85, 0.78), (0.73, 0.87), (0.6, 0.9), (0.47, 0.87), (0.35, 0.78), (0.28, 0.65), (0.25, 0.5), (0.28, 0.35), (0.35, 0.22), (0.47, 0.13), (0.6, 0.1), (0.73, 0.13), (0.85, 0.22)]],
+        "6": [[(0.745, 0.448), (0.758, 0.602), (0.732, 0.739), (0.671, 0.841), (0.583, 0.891), (0.483, 0.881), (0.386, 0.813), (0.306, 0.698), (0.255, 0.552), (0.242, 0.398), (0.268, 0.261), (0.329, 0.159), (0.417, 0.109), (0.517, 0.119), (0.614, 0.187), (0.694, 0.302), (0.745, 0.448)]],
+        "7": [[(0.35, 0.72), (0.45, 0.85), (0.62, 0.88), (0.75, 0.8), (0.76, 0.65), (0.64, 0.52), (0.52, 0.4), (0.48, 0.28), (0.55, 0.16), (0.68, 0.12), (0.78, 0.15)]],
+        "8": [[(0.35, 0.52), (0.4, 0.32), (0.48, 0.18), (0.6, 0.1), (0.56, 0.18), (0.48, 0.32), (0.38, 0.48)]],
         "a": [[(0.15, 0.35), (0.28, 0.68), (0.62, 0.72), (0.82, 0.45), (0.68, 0.18), (0.35, 0.14), (0.18, 0.32), (0.38, 0.58), (0.78, 0.58), (0.86, 0.18)]],
-        "b": [[(0.22, 0.05), (0.2, 0.92), (0.42, 1.05), (0.52, 0.78), (0.35, 0.48), (0.58, 0.7), (0.9, 0.58), (0.82, 0.22), (0.48, 0.1), (0.28, 0.28)]],
+        "b": [[(0.25, 1.05), (0.25, 0.55), (0.25, 0.08)], [(0.25, 0.08), (0.52, 0.08), (0.74, 0.22), (0.72, 0.46), (0.54, 0.54), (0.25, 0.40)]],
         "c": [[(0.82, 0.58), (0.58, 0.78), (0.22, 0.62), (0.12, 0.32), (0.34, 0.12), (0.78, 0.22)]],
-        "d": [[(0.82, 1.02), (0.72, 0.5), (0.78, 0.12), (0.58, 0.18), (0.32, 0.12), (0.14, 0.34), (0.3, 0.66), (0.65, 0.7), (0.84, 0.48), (0.95, 0.18)]],
+        "d": [[(0.75, 1.05), (0.75, 0.55), (0.75, 0.08)], [(0.75, 0.12), (0.55, 0.12), (0.34, 0.24), (0.32, 0.48), (0.48, 0.60), (0.75, 0.52)]],
         "e": [[(0.16, 0.38), (0.45, 0.58), (0.78, 0.52), (0.58, 0.3), (0.2, 0.34), (0.32, 0.12), (0.78, 0.2)]],
         "f": [[(0.62, 1.0), (0.38, 0.85), (0.42, 0.42), (0.34, -0.18), (0.1, -0.32), (0.0, -0.08), (0.5, 0.48), (0.82, 0.48)]],
         "g": [[(0.78, 0.62), (0.52, 0.76), (0.2, 0.58), (0.16, 0.28), (0.42, 0.14), (0.72, 0.28), (0.78, 0.68), (0.62, -0.2), (0.28, -0.38), (0.08, -0.18), (0.32, 0.02)]],
-        "h": [[(0.2, 0.05), (0.18, 0.96), (0.42, 1.06), (0.55, 0.82), (0.28, 0.42), (0.48, 0.66), (0.78, 0.62), (0.78, 0.18), (0.94, 0.14)]],
+        "h": [[(0.05, 0.15), (0.22, 0.52), (0.36, 0.85), (0.34, 1.05), (0.28, 0.96), (0.30, 0.62), (0.32, 0.22), (0.32, 0.05)], [(0.32, 0.35), (0.46, 0.58), (0.64, 0.62), (0.74, 0.45), (0.76, 0.18), (0.86, 0.15)]],
         "i": [[(0.42, 0.62), (0.34, 0.2), (0.5, 0.12), (0.68, 0.22)], [(0.45, 0.92), (0.47, 0.94)]],
         "j": [[(0.56, 0.62), (0.4, -0.2), (0.16, -0.36), (0.0, -0.18), (0.24, 0.02)], [(0.58, 0.92), (0.6, 0.94)]],
-        "k": [[(0.2, 0.04), (0.18, 0.96), (0.44, 1.04), (0.48, 0.76), (0.2, 0.42), (0.78, 0.72), (0.36, 0.42), (0.86, 0.12)]],
-        "l": [[(0.28, 0.05), (0.28, 0.88), (0.46, 1.08), (0.62, 0.9), (0.45, 0.52), (0.34, 0.18), (0.62, 0.12), (0.8, 0.24)]],
-        "m": [[(0.12, 0.16), (0.22, 0.64), (0.42, 0.68), (0.42, 0.18), (0.56, 0.62), (0.78, 0.66), (0.78, 0.18), (0.96, 0.28)]],
-        "n": [[(0.12, 0.16), (0.22, 0.64), (0.48, 0.66), (0.48, 0.18), (0.72, 0.62), (0.92, 0.2)]],
+        "k": [[(0.24, 0.05), (0.24, 0.15), (0.36, 0.85), (0.34, 1.05), (0.28, 0.96), (0.30, 0.62), (0.32, 0.22), (0.32, 0.05)], [(0.32, 0.40), (0.46, 0.60), (0.58, 0.58), (0.54, 0.42), (0.42, 0.38), (0.56, 0.22), (0.74, 0.10), (0.84, 0.18)]],
+        "l": [[(0.24, 0.15), (0.36, 0.85), (0.34, 1.05), (0.28, 0.96), (0.30, 0.62), (0.32, 0.22), (0.46, 0.10), (0.68, 0.18)]],
+        "m": [[(0.22, 0.48), (0.16, 0.58), (0.10, 0.52), (0.12, 0.16), (0.14, 0.38), (0.24, 0.58), (0.38, 0.62), (0.46, 0.42), (0.48, 0.16), (0.50, 0.38), (0.60, 0.58), (0.74, 0.62), (0.82, 0.42), (0.84, 0.16), (0.94, 0.22)]],
+        "n": [[(0.22, 0.48), (0.16, 0.58), (0.10, 0.52), (0.12, 0.16), (0.14, 0.38), (0.26, 0.58), (0.46, 0.62), (0.58, 0.45), (0.60, 0.16), (0.72, 0.22)]],
         "o": [[(0.46, 0.72), (0.18, 0.58), (0.12, 0.3), (0.34, 0.1), (0.72, 0.22), (0.82, 0.52), (0.58, 0.72), (0.36, 0.5), (0.66, 0.36), (0.94, 0.42)]],
-        "p": [[(0.18, -0.35), (0.2, 0.62), (0.5, 0.7), (0.82, 0.52), (0.76, 0.2), (0.44, 0.12), (0.22, 0.36)]],
-        "q": [[(0.78, 0.62), (0.52, 0.76), (0.2, 0.58), (0.16, 0.28), (0.42, 0.14), (0.72, 0.28), (0.78, 0.68), (0.76, -0.3), (1.0, -0.2)]],
-        "r": [[(0.16, 0.14), (0.24, 0.62), (0.44, 0.64), (0.54, 0.48), (0.72, 0.72), (0.92, 0.62)]],
+        "p": [[(0.20, -0.35), (0.20, 0.62)], [(0.20, 0.62), (0.50, 0.70), (0.82, 0.52), (0.76, 0.20), (0.44, 0.12), (0.22, 0.36), (0.42, 0.14), (0.64, 0.12), (0.82, 0.20)]],
+        "q": [[(0.66, 0.52), (0.48, 0.62), (0.30, 0.44), (0.30, 0.26), (0.46, 0.14), (0.66, 0.24)], [(0.66, 0.62), (0.66, 0.135), (0.66, -0.35)]],
+        "r": [[(0.24, 0.14), (0.36, 0.48), (0.42, 0.60), (0.32, 0.62), (0.26, 0.54), (0.34, 0.46), (0.48, 0.52), (0.68, 0.56), (0.72, 0.24), (0.86, 0.16)]],
         "s": [[(0.78, 0.62), (0.48, 0.78), (0.18, 0.62), (0.34, 0.42), (0.72, 0.34), (0.74, 0.12), (0.34, 0.1), (0.12, 0.26)]],
         "t": [[(0.44, 0.9), (0.36, 0.24), (0.54, 0.08), (0.78, 0.28)], [(0.18, 0.58), (0.72, 0.58)]],
         "u": [[(0.16, 0.62), (0.18, 0.22), (0.42, 0.12), (0.68, 0.56), (0.68, 0.18), (0.88, 0.18)]],

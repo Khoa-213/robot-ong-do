@@ -1,0 +1,16 @@
+Font skeleton trajectory summary
+Text: Tâm
+Font: D:\Capstone\robot-ong-do\assets\fonts\UTM ThuPhap Thien An.ttf
+Trajectory ID: a285aa5c965ec659
+Approved: False
+Stroke count: 34
+Point count: 696
+PEN_DOWN points: 594
+PEN_UP/PEN_TRANSITION points: 102
+X min/max: -60.321/11.487
+Y min/max: 421.089/499.749
+Z min/max: 289.541/371.442
+Font IoU: 0.46687
+Font outside ratio: 0.00234
+Validation safe: True
+Robot execution is locked until this JSON is reviewed and approved.

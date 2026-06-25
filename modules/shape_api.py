@@ -17,6 +17,7 @@ SHAPE_NAMES = (
     "triangle",
     "tam",
     "tam1",
+    "calligraphy_8_strokes",
 )
 
 
@@ -52,6 +53,17 @@ def build_shape_pose_strokes(config: dict[str, Any], shape_name: str) -> list[li
         return [_build_configured_tam_svg(config)]
     if shape_name in ("tam1", "tam_new"):
         return [_build_svg_file(config, "assets/svg/tam1.svg")]
+    if shape_name == "calligraphy_8_strokes":
+        from modules.text_trajectory import build_text_pose_strokes
+        temp_config = dict(config)
+        temp_config["text_demo"] = dict(config.get("text_demo", {}))
+        temp_config["text_demo"]["mode"] = "calligraphy_v2"
+        temp_config["text_demo"]["continuous"] = False
+        temp_config["text_demo"]["u_min"] = 0.1
+        temp_config["text_demo"]["u_max"] = 0.9
+        temp_config["text_demo"]["v_min"] = 0.35
+        temp_config["text_demo"]["v_max"] = 0.65
+        return build_text_pose_strokes(temp_config, "12345678")
 
     raise ValueError(f"Unknown shape '{shape_name}'. Available: {', '.join(SHAPE_NAMES)}")
 
